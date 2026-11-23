@@ -67,6 +67,15 @@ A handoff tells the next session what was done, what was decided and what comes 
 from each ingested session. In agents with a `Stop` hook, it also asks the agent to write its own at turn 8, then at
 most once every 20 turns. An agent-written handoff takes precedence.
 
+`mesa-lore export` writes a Markdown notebook for a project: open items, decisions, then up to 30 recent sessions
+grouped by date and agent. `export --all -o notes/` writes one file per project.
+
+## Project scopes
+
+Each session is stored under the Git repository it worked in, and worktrees of one repository share a scope. A session
+started outside a repository is assigned from the files it touched, and files it edited count before files it only
+read. A session with no repository goes to `misc`.
+
 Search returns the current project plus `global` notes. `research:<topic>` scopes are returned only when asked for
 directly.
 
@@ -85,18 +94,19 @@ excluded_projects = ["private-client"]
 
 ## Platform status
 
-- Linux: tested.
-- macOS: untested.
-- Windows: not supported yet.
+- Linux: tested. CI runs the full suite on Python 3.10 to 3.14.
+- macOS: CI runs the full suite on Python 3.14. Not tested by hand.
+- Windows: experimental. CI runs the portability, notebook, wrapper and isolation tests on Python 3.14, but not the
+  full suite or benchmark.
 
 ## Measured results
 
-From the included test suite and benchmark on Linux with Python 3.12:
+From the included test suite and benchmark on Linux with Python 3.14:
 
-- 198 tests pass and all 31 required benchmark categories pass.
+- 218 tests pass and all 31 required benchmark categories pass.
 - Keyword search finds 8 of 9 benchmark questions. Turkish search finds 3 of 3.
 - Session startup costs 432 tokens: 163 for the index and 269 for tool definitions.
-- Search p95 was 86 ms on 10,000 chunks in one benchmark run.
+- Search p95 was 84 ms of CPU time on 10,000 chunks in one benchmark run.
 
 From a private evaluation on the author's own transcripts (38,291 entries, 168 MB), which cannot be reproduced from this
 repository:
