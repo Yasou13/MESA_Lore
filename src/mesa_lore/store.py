@@ -155,8 +155,10 @@ def _handoff_text(asked="", done="", files="", errors="", open_item=""):
         ("Asked", asked, 100), ("Done", done, 140), ("Files", files, 115), ("Errors", errors, 55), ("Open", open_item, 33),
     ) if value)
 
+_fields = lambda text: dict(ln.split(": ", 1) for ln in (text or "").splitlines() if ": " in ln)
+
 def _shown_handoff(text, agent):
-    legacy = dict(line.split(": ", 1) for line in text.splitlines() if ": " in line)
+    legacy = _fields(text)
     if "İstek" not in legacy and "Yapılan" not in legacy:
         return mask_secrets(text)
     asked = legacy.get("İstek", "").split(" | ", 1)[0]
@@ -725,7 +727,8 @@ class Store:
         layout = (("Open items", "active", "todo"), ("Decisions", "active", "decision"), ("Sessions", "", ""),
                   ("Failed Attempts", "active", "failed_attempt"), ("Facts", "active", "fact"), ("History", "superseded", None))
         out = {title: [n for n in notes if n["state"] == state and (kind is None or n["kind"] == kind)] for title, state, kind in layout}
-        out["Sessions"] = self._session_handoffs(scope, self._agent_handoffs(scope), sessions)
+        asked = {r[0]: _fields(_shown_handoff(r[1], r[2])).get("Asked", "") for r in self.con.execute(f"SELECT session_id, text, agent FROM handoffs WHERE {_in_sql('project', scope)}", scope)}
+        out["Sessions"] = [{**h, "asked": asked.get(h["session_id"], "")} for h in self._session_handoffs(scope, self._agent_handoffs(scope), sessions)]
         return out
 
     def scopes(self) -> list[tuple]:

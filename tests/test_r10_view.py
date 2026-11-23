@@ -120,3 +120,77 @@ def test_view_strips_terminal_control_characters(run):
     st.close()
     out = run("view")
     assert "\x1b" not in out and "\x07" not in out and "safe [2Jtext here" in out
+
+
+def seed_project():
+    st = Store(get_db_path())
+    note(st, "alpha", "Write the docs", "todo", "2026-11-20T09:00:00+00:00", "n_todo000001")
+    note(st, "alpha", "Add a release note", "todo", "2026-11-21T09:00:00+00:00", "n_todo000002")
+    note(st, "alpha", "Keep SQLite as the only store", "decision", "2026-11-19T09:00:00+00:00", "n_deci000001")
+    note(st, "alpha", "Done: shipped parser\nDecisions: keep sqlite\nOpen: docs\nNext: write the README", "handoff",
+         "2026-11-23T10:00:00+00:00", "n_handoff001", session_id="s3", agent="claude")
+    auto_handoff(st, "alpha", "s3", "Asked: ship the parser\nDone: auto text", "claude", "2026-11-23T09:59:00Z")
+    auto_handoff(st, "alpha", "s2", "Asked: fix login\nDone: fixed the login bug\nOpen: stale copy", "codex", "2026-11-22T08:00:00Z")
+    auto_handoff(st, "other", "s9", "Asked: secret other\nDone: other project", "codex", "2026-11-23T11:00:00Z")
+    return st
+
+
+PROJECT_GOLDEN = (
+    "alpha\n"
+    "\n"
+    "PICK UP WHERE YOU LEFT OFF\n"
+    "  claude · written by agent · 2 hours ago\n"
+    "  Done       shipped parser\n"
+    "  Decisions  keep sqlite\n"
+    "  Open       docs\n"
+    "  Next       write the README\n"
+    "\n"
+    "OPEN ITEMS\n"
+    "  1. Write the docs\n"
+    "  2. Add a release note\n"
+    "\n"
+    "DECISIONS\n"
+    "  n_deci00  Keep SQLite as the only store\n"
+    "\n"
+    "SESSIONS\n"
+    "  2026-11-23  claude\n"
+    "    Asked  ship the parser\n"
+    "    Done   shipped parser\n"
+    "  2026-11-22  codex\n"
+    "    Asked  fix login\n"
+    "    Done   fixed the login bug\n"
+)
+
+
+def test_project_view_golden(run):
+    seed_project().close()
+    assert run("view", "alpha") == PROJECT_GOLDEN
+
+
+def test_project_view_defaults_to_current_folder(run, monkeypatch):
+    seed_project().close()
+    monkeypatch.setattr(cli, "get_project", lambda cwd: "alpha")
+    assert run("view", ".") == PROJECT_GOLDEN
+
+
+def test_auto_handoff_shows_live_open_item(run):
+    st = Store(get_db_path())
+    note(st, "beta", "Current todo", "todo", "2026-11-20T09:00:00+00:00", "n_todo000009")
+    auto_handoff(st, "beta", "s1", "Asked: a\nDone: b\nOpen: stale copy", "codex", "2026-11-23T11:00:00Z")
+    st.close()
+    out = run("view", "beta")
+    assert "codex · auto · 1 hour ago" in out and "Open       Current todo" in out and "stale copy" not in out
+
+
+def test_sessions_limit(run):
+    st = Store(get_db_path())
+    for i in range(7):
+        auto_handoff(st, "many", f"s{i}", f"Asked: ask{i}\nDone: done{i}", "claude", f"2026-11-1{i}T10:00:00Z")
+    st.close()
+    assert run("view", "many").count("Asked") == 5
+    assert run("view", "many", "--sessions", "7").count("Asked") == 7
+
+
+def test_unknown_project(run):
+    seed().close()
+    assert run("view", "nope") == "No memory for nope.\n"

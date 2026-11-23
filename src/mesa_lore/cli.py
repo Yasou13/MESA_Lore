@@ -1,7 +1,7 @@
 import argparse, hashlib, json, os, re, shutil, sqlite3, sys, time, unicodedata
 from contextlib import closing
 from pathlib import Path
-from mesa_lore.store import Store, _parse_ts, _project_scope, get_db_path, get_project, scan_antigravity
+from mesa_lore.store import Store, _fields, _parse_ts, _project_scope, get_db_path, get_project, scan_antigravity
 from mesa_lore.text import mask_secrets, wrap_untrusted
 
 def get_queue_path() -> Path:
@@ -100,7 +100,7 @@ def _export(args, parser):
 
 _EMPTY = "No memory yet. Run `mesa-lore install`."
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")  # stored text must not be able to drive the terminal
-_fields = lambda text: dict(ln.split(": ", 1) for ln in (text or "").splitlines() if ": " in ln)
+_section = lambda title, rows: ["", title, *(rows or ["  (none)"])]
 _cols = lambda c: 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
 _width = lambda s: sum(map(_cols, s))
 
@@ -124,11 +124,10 @@ def _ago(ts):
 
 def _overview(st, scopes, width):
     you = [n for title, items in st.sections("global", 0).items() if title not in ("Sessions", "History") for n in items if n["kind"] != "handoff"]
-    out = ["YOU", *([f"  {_fit(n['text'], width - 2)}" for n in you] or ["  (none)"])]
+    out = _section("YOU", [f"  {_fit(n['text'], width - 2)}" for n in you])[1:]
     for title, group in (("PROJECTS", [s for s in scopes if s[0] != "global" and not s[0].startswith("research:")]),
                          ("RESEARCH", [s for s in scopes if s[0].startswith("research:")])):
-        out += ["", title] + ([] if group else ["  (none)"])
-        names = [_fit(name, width // 4) for name, _ in group]
+        names, rows = [_fit(name, width // 4) for name, _ in group], []
         name_w = max(map(_width, names), default=0)
         for shown, (name, ts) in zip(names, group):
             h = st.latest_handoff(name)
@@ -137,16 +136,38 @@ def _overview(st, scopes, width):
             meta = _fit(f"{_fit(h['agent'] or 'unknown', 12)} · {_ago(ts)}" if h else _ago(ts), width // 3)
             body = _fit(info.get(key), width - name_w - _width(meta) - 12) if key else ""
             left = f"  {shown}{' ' * (name_w - _width(shown))}  " + (f"{key}: {body}" if key else "")
-            out.append(f"{left}{' ' * (width - _width(left) - _width(meta))}{meta}")
+            rows.append(f"{left}{' ' * (width - _width(left) - _width(meta))}{meta}")
+        out += _section(title, rows)
     return "\n".join(out)
+
+def _project_view(st, name, sessions, width):
+    data, h = st.sections(name, max(sessions, 0)), st.latest_handoff(name)
+    todos, pickup = data["Open items"], []
+    if h:
+        info = _fields(h["text"])
+        if "id" not in h:  # auto text holds a copy of the todo from ingest time: show the live one
+            info["Open"] = todos[-1]["text"] if todos else ""
+        pickup = [f"  {_fit(' · '.join((h['agent'] or 'unknown', 'written by agent' if 'id' in h else 'auto', _ago(h['ts']))), width - 2)}"]
+        pickup += [f"  {k:<11}{_fit(info[k], width - 13)}" for k in ("Done", "Decisions", "Open", "Next") if info.get(k)] or [f"  {_fit(h['text'], width - 2)}"]
+    out = [name, *_section("PICK UP WHERE YOU LEFT OFF", pickup)]
+    out += _section("OPEN ITEMS", [f"  {i}. {_fit(n['text'], width - 4 - len(str(i)))}" for i, n in enumerate(todos, 1)])
+    out += _section("DECISIONS", [f"  {n['id'][:8]}  {_fit(n['text'], width - 12)}" for n in data["Decisions"]])
+    rows = []
+    for s in data["Sessions"]:
+        rows.append(f"  {(s['ts'] or 'unknown')[:10]}  {_fit(s['agent'] or 'unknown', width - 14)}")
+        rows += [f"    {k:<7}{_fit(v, width - 11)}" for k, v in (("Asked", s["asked"]), ("Done", _fields(s["text"]).get("Done"))) if v]
+    return "\n".join(out + _section("SESSIONS", rows))
 
 def _view(args):
     if not get_db_path().exists():
         return print(_EMPTY)
     try:
         with closing(Store(get_db_path(), read_only=True)) as st:
-            scopes = st.scopes()
-            print(_overview(st, scopes, max(shutil.get_terminal_size().columns, 40)) if scopes else _EMPTY)
+            scopes, width = st.scopes(), max(shutil.get_terminal_size().columns, 40)
+            name = args.project and (get_project(os.getcwd()) if args.project == "." else _project_scope(args.project)[0])
+            if not scopes or (name and name not in dict(scopes)):
+                return print(f"No memory for {name}." if scopes else _EMPTY)
+            print(_project_view(st, name, args.sessions, width) if name else _overview(st, scopes, width))
     except sqlite3.OperationalError as e:
         sys.exit(f"view: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
 
@@ -163,7 +184,9 @@ def main():
     p_search.add_argument("--kind", choices=["decision", "fact", "todo", "failed_attempt", "handoff"], default=None, help="Filter by note kind")
     p_index = sub.add_parser("index", help="Show session-start memory index")
     p_index.add_argument("--budget", type=int, default=400, help="Token budget")
-    sub.add_parser("view", help="Readable overview of your memory")
+    p_view = sub.add_parser("view", help="Readable overview, or one project (. = current folder)")
+    p_view.add_argument("project", nargs="?", help="Project name")
+    p_view.add_argument("--sessions", type=int, default=5, help="Sessions to show")
     p_show = sub.add_parser("show", help="Show entry details")
     p_show.add_argument("id", help="Entry ID")
     p_show.add_argument("--before", type=int, default=0, help="Neighbor chunks before")
