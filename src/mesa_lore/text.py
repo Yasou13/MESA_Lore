@@ -28,9 +28,7 @@ def tr_lower(s: str) -> str:
 FOLD = str.maketrans("çğıöşü", "cgiosu")
 
 def normalize(s: str) -> str:
-    if not s:
-        return ""
-    return s.lower() if s.isascii() else tr_lower(s).replace("ı", "i")  # ASCII: I -> ı -> i is plain lower()
+    return "" if not s else s.lower() if s.isascii() else tr_lower(s).replace("ı", "i")  # ASCII: I -> ı -> i is plain lower()
 
 @lru_cache(maxsize=4096)
 def fold_tr(s: str) -> str:
@@ -120,6 +118,4 @@ def wrap_untrusted(text: str) -> str:
     return f"<untrusted_memory>\n{text}\n</untrusted_memory>"
 
 def mask_secrets(text: str) -> str:
-    if not text:
-        return text
-    return SECRET_PATTERN.sub("[REDACTED]", text)
+    return SECRET_PATTERN.sub("[REDACTED]", text) if text else text

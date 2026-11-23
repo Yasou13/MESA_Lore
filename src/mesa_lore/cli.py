@@ -13,8 +13,7 @@ def _resolve(item: str):
     if p.is_file():
         return p, "codex" if ".codex" in str(p) or p.name.startswith("rollout-") else "claude"
     if not p.exists() and re.fullmatch(r"[\w-]+", item):
-        for agent, pattern in (("codex", f".codex/sessions/**/*{item}*.jsonl"),
-                               ("claude", f".claude/projects/**/*{item}*.jsonl")):
+        for agent, pattern in (("codex", f".codex/sessions/**/*{item}*.jsonl"), ("claude", f".claude/projects/**/*{item}*.jsonl")):
             match = next(Path.home().glob(pattern), None)
             if match:
                 return match, agent
@@ -78,8 +77,7 @@ def _handle_start_hook(st: Store):
     ingest_pending_files(st)
     idx = st.index(get_project(data.get("cwd") or os.getcwd()))
     if idx:  # JSON form is understood by both Claude Code and Codex SessionStart hooks
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                                 "additionalContext": wrap_untrusted(idx)}}, ensure_ascii=False))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": wrap_untrusted(idx)}}, ensure_ascii=False))
 
 def _export(args, parser):
     if args.all and (not args.out or args.project):
@@ -98,7 +96,7 @@ def _export(args, parser):
     except sqlite3.OperationalError as e:
         sys.exit(f"export: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
 
-_EMPTY = "No memory yet. Run `mesa-lore install`."
+_EMPTY, _NOTE_KINDS = "No memory yet. Run `mesa-lore install`.", ("decision", "fact", "todo", "failed_attempt")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")  # stored text must not be able to drive the terminal
 _section = lambda title, rows: ["", title, *(rows or ["  (none)"])]
 _cols = lambda c: 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
@@ -171,6 +169,32 @@ def _view(args):
     except sqlite3.OperationalError as e:
         sys.exit(f"view: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
 
+def _note(st, args, parser):
+    project = _project_scope(args.project)[0] if args.project else get_project(os.getcwd())
+    if args.action in ("add", "edit") and not args.text.strip():
+        parser.error("note text is empty")
+    if args.action == "add":
+        return print(f"Added {st.save_note(project, args.text, args.kind, agent='user')[:8]} to {project}.")
+    hits = st.find_notes(project, args.ref)
+    if args.action == "done" and args.ref.isdigit():  # the OPEN ITEMS numbering of `view`
+        hits = st.sections(project, 0)["Open items"][int(args.ref) - 1:int(args.ref)] if int(args.ref) else []
+    if len(hits) != 1:
+        sys.exit(f"{'Ambiguous id' if hits else 'No note'} {args.ref} in {project}.")
+    n, short = hits[0], hits[0]["id"][:8]
+    if args.action != "rm" and (n["state"] != "active" or n["kind"] not in (("todo",) if args.action == "done" else _NOTE_KINDS)):
+        sys.exit(f"Cannot {args.action} {short}: it is a {n['state']} {n['kind']}.")
+    if args.action == "done":
+        with st.con:
+            st.con.execute("UPDATE entries SET state = 'superseded' WHERE id = ?", (n["id"],))
+        print(f"Done: {_fit(n['text'], 70)}")
+    elif args.action == "edit":
+        print(f"Replaced {short} with {st.save_note(n['project'], args.text, n['kind'], replaces=n['id'], agent='user')[:8]}.")
+    else:
+        if not args.yes:
+            print(f"Delete {_fit(n['text'], 60)}? [y/N] ", end="", flush=True)
+        ok = args.yes or sys.stdin.readline().strip().lower() in ("y", "yes")
+        print(f"Deleted {short}." if ok and st.delete(n["id"]) else "Kept.")
+
 def main():
     parser = argparse.ArgumentParser(prog="mesa-lore", description="Local memory layer for coding agents")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -187,6 +211,14 @@ def main():
     p_view = sub.add_parser("view", help="Readable overview, or one project (. = current folder)")
     p_view.add_argument("project", nargs="?", help="Project name")
     p_view.add_argument("--sessions", type=int, default=5, help="Sessions to show")
+    p_note = sub.add_parser("note", help="Add, finish, edit or remove your notes").add_subparsers(dest="action", required=True)
+    notes = {name: p_note.add_parser(name) for name in ("add", "done", "edit", "rm")}
+    for name, p in notes.items():
+        for positional in {"add": ["text"], "edit": ["ref", "text"]}.get(name, ["ref"]):
+            p.add_argument(positional)
+        p.add_argument("-p", "--project", default=None, help="Project name")
+    notes["add"].add_argument("--kind", choices=_NOTE_KINDS, default="todo")
+    notes["rm"].add_argument("-y", "--yes", action="store_true", help="Do not ask")
     p_show = sub.add_parser("show", help="Show entry details")
     p_show.add_argument("id", help="Entry ID")
     p_show.add_argument("--before", type=int, default=0, help="Neighbor chunks before")
@@ -221,12 +253,10 @@ def main():
             os.environ["APPDATA"] = str(home / "AppData/Roaming")
     if args.command == "serve":
         from mesa_lore.mcp_server import run_server
-        run_server()
-        return
+        return run_server()
     if args.command == "uninstall":
         from mesa_lore.install import run_uninstall
-        print(run_uninstall(home))
-        return
+        return print(run_uninstall(home))
     if args.command == "hook" and args.event in ("SessionEnd", "Stop"):
         data = _handle_end_hook()
         if args.event == "Stop" and (reason := _handoff_reason(data)):
@@ -254,6 +284,8 @@ def main():
                     print(f"[{r['id']}] ({r['source_type']}{stale_flag}) {r['text']}")
         elif args.command == "index":
             print(st.index(args.project or get_project(os.getcwd()), budget_tokens=args.budget) or "No memory index.")
+        elif args.command == "note":
+            _note(st, args, parser)
         elif args.command == "show":
             e = st.get(args.id, project=args.project or get_project(os.getcwd()), before=args.before, after=args.after)
             print("\n".join(f"{k}: {v}" for k, v in e.items()) if e else f"Not found: {args.id}")

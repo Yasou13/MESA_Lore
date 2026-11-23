@@ -41,8 +41,7 @@ def tool_chunk(sid, cwd, ts, pos, model, name, args, result, flagged=False):
         chunk["paths"].extend(p for p in re.findall(r"""(?<![\w:/])(?:[A-Za-z]:)?/[^\s"'`<>()\[\]{};|,]+""", args) if Path(p).is_file())
     chunk["changed"] = bool(re.search(r"edit|write|replace|patch|delete", tool))
     code = result.get("exit_code", 0) if isinstance(result, dict) else 0
-    if flagged or (not chunk["changed"] and tool not in ("read", "read_file", "view_image")
-                   and (code or _EXIT.search("\n".join(trimmed.splitlines()[:4])))):
+    if flagged or (not chunk["changed"] and tool not in ("read", "read_file", "view_image") and (code or _EXIT.search("\n".join(trimmed.splitlines()[:4])))):
         error_lines = [line.strip() for line in trimmed.splitlines() if line.strip()]
         chunk["error"] = next((line for line in reversed(error_lines) if re.match(r"\w+(?:Error|Exception):", line)), next(iter(error_lines), "Tool failed"))
     return chunk

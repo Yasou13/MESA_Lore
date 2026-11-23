@@ -99,8 +99,7 @@ def _repo_at(cwd):
         while not p.is_dir() and p != p.parent:
             p = p.parent
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        res = subprocess.run(["git", "rev-parse", "--show-toplevel", "--git-common-dir"], cwd=p,
-                             capture_output=True, text=True, timeout=2.0, env=env)
+        res = subprocess.run(["git", "rev-parse", "--show-toplevel", "--git-common-dir"], cwd=p, capture_output=True, text=True, timeout=2.0, env=env)
         if res.returncode == 0:
             root, git_dir = res.stdout.splitlines()
             common = (p / git_dir).resolve()
@@ -180,14 +179,16 @@ def _parse_ts(ts: str | None) -> float | None:
     except ValueError:
         return None
 
-def scan_antigravity(st) -> int:
+def ingest_all(st, paths, agent) -> int:
     cnt = 0
-    for p in discover_transcripts():
+    for p in paths:
         try:
-            cnt += st.ingest_file(p, agent="antigravity")
+            cnt += st.ingest_file(p, agent=agent)
         except Exception:
             pass
     return cnt
+
+scan_antigravity = lambda st: ingest_all(st, discover_transcripts(), "antigravity")
 
 class Store:
     def __init__(self, db_path, read_only=False):
@@ -200,11 +201,9 @@ class Store:
             return
         for attempt in range(10):
             try:
-                mode = self.con.execute("PRAGMA journal_mode").fetchone()[0]
-                if mode.lower() != "wal":
+                if self.con.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
                     self.con.execute("PRAGMA journal_mode = WAL")
-                ver = self._current_schema_version()
-                if ver < SCHEMA_VERSION:
+                if (ver := self._current_schema_version()) < SCHEMA_VERSION:
                     self._init_schema(ver)
                 break
             except sqlite3.OperationalError:
@@ -260,12 +259,10 @@ class Store:
             projects[sid] = (_project_scope(repo[1])[0], repo[0]) if repo else ("misc", None)
         with self.con:
             if st_stat is not None:
-                self.con.execute("INSERT OR REPLACE INTO ingested_files (path, agent, size, mtime_ns) VALUES (?, ?, ?, ?)",
-                                 (p_key, agent, st_stat.st_size, st_stat.st_mtime_ns))
+                self.con.execute("INSERT OR REPLACE INTO ingested_files (path, agent, size, mtime_ns) VALUES (?, ?, ?, ?)", (p_key, agent, st_stat.st_size, st_stat.st_mtime_ns))
             self.con.execute("DELETE FROM ingest_warnings WHERE path = ? AND agent = ?", (str(path), agent))
             now = datetime.now(timezone.utc).isoformat()
-            self.con.executemany("INSERT OR REPLACE INTO ingest_warnings (path, agent, reason, ts) VALUES (?, ?, ?, ?)",
-                                 [(str(path), agent, w, now) for w in warnings])
+            self.con.executemany("INSERT OR REPLACE INTO ingest_warnings (path, agent, reason, ts) VALUES (?, ?, ?, ?)", [(str(path), agent, w, now) for w in warnings])
             prior = {}
             for sid, (project, _) in projects.items():
                 row = self.con.execute("SELECT project FROM entries WHERE session_id = ? AND source_type != 'note' ORDER BY rowid LIMIT 1", (sid,)).fetchone()
@@ -700,12 +697,10 @@ class Store:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
         scope = _project_scope(project) if project else ()
         cond, prms = (f" WHERE {_in_sql('project', scope)}", scope) if scope else ("", ())
-        old_ids = lambda tbl, col="id": [r[0] for r in self.con.execute(f"SELECT {col}, ts FROM {tbl}{cond}", prms).fetchall()
-                                         if (t := _parse_ts(r[1])) is not None and t < cutoff]
+        old_ids = lambda tbl, col="id": [r[0] for r in self.con.execute(f"SELECT {col}, ts FROM {tbl}{cond}", prms).fetchall() if (t := _parse_ts(r[1])) is not None and t < cutoff]
         eids, hids, uids = old_ids("entries"), old_ids("handoffs"), old_ids("usage", "rowid")
         with self.con:
-            for tbl, col, vals in (("entries_fts", "id", eids + hids), ("entries", "id", eids),
-                                   ("handoffs", "id", hids), ("usage", "rowid", uids)):
+            for tbl, col, vals in (("entries_fts", "id", eids + hids), ("entries", "id", eids), ("handoffs", "id", hids), ("usage", "rowid", uids)):
                 for i in range(0, len(vals), 500):
                     self.con.execute(f"DELETE FROM {tbl} WHERE {col} IN ({','.join('?' * len(vals[i:i + 500]))})", vals[i:i + 500])
         return len(eids)
@@ -730,6 +725,11 @@ class Store:
         asked = {r[0]: _fields(_shown_handoff(r[1], r[2])).get("Asked", "") for r in self.con.execute(f"SELECT session_id, text, agent FROM handoffs WHERE {_in_sql('project', scope)}", scope)}
         out["Sessions"] = [{**h, "asked": asked.get(h["session_id"], "")} for h in self._session_handoffs(scope, self._agent_handoffs(scope), sessions)]
         return out
+
+    def find_notes(self, project, ref) -> list:
+        """Notes visible from project whose full id, or 8-char short id as shown by `view`, is ref."""
+        scope = _project_scope(project) + ("global",)
+        return self.con.execute(f"SELECT id, project, kind, state, text FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' AND (id = ? OR substr(id, 1, 8) = ?)", (*scope, ref, ref)).fetchall()
 
     def scopes(self) -> list[tuple]:
         """[(scope, last activity)] newest first, aliases merged."""
@@ -758,8 +758,7 @@ class Store:
                     out.extend(("", f"**{h['agent'] or 'unknown'}**", h["text"]))
             elif items or title in ("Open items", "Decisions"):
                 out.append(f"\n## {title}")
-                out.extend("- {}{}".format("[{}] ".format(it["agent"]) if it["agent"] else "",
-                                           " ".join(mask_secrets(it["text"]).splitlines())) for it in items)
+                out.extend("- {}{}".format("[{}] ".format(it["agent"]) if it["agent"] else "", " ".join(mask_secrets(it["text"]).splitlines())) for it in items)
         return "\n".join(out) + "\n"
 
     def stats(self, project: str | None = None, days: int | None = None, agent: str | None = None) -> dict:
@@ -777,8 +776,7 @@ class Store:
             if cutoff is None or (t_sec is not None and t_sec >= cutoff):
                 sessions.setdefault((r["agent"], r["session_id"]), []).append((t_sec, r))
         by_agent, add = {}, lambda d, **kw: d.update({k: d[k] + v for k, v in kw.items()})
-        comp = {k: dict(sess=0, turns=0, turn_cost=0, starts=0, start_cost=0, f10=0, resumes=0, resume_cost=0)
-                for k in ("with_memory", "without_memory", "with_handoff")}
+        comp = {k: dict(sess=0, turns=0, turn_cost=0, starts=0, start_cost=0, f10=0, resumes=0, resume_cost=0) for k in ("with_memory", "without_memory", "with_handoff")}
         for (ag_name, _sid), turns in sessions.items():
             ag = by_agent.setdefault(ag_name, dict(sessions=0, turns=0, uncached_input=0, cache_read=0, cache_write=0, output=0, resume_turns=0, resume_cost=0))
             ag["sessions"] += 1
@@ -807,14 +805,10 @@ class Store:
             "avg_first_10_cost": cb["f10"] // cb["sess"] if cb["sess"] else 0,
             "avg_resume_cost": cb["resume_cost"] // cb["resumes"] if cb["resumes"] else 0,
         } for k, cb in comp.items()}
-        note_rows = self.con.execute(
-            f"SELECT ts FROM entries WHERE {pcond} AND (? IS NULL OR agent = ?) AND source_type = 'note'",
-            scope + (agent, agent),
-        ).fetchall()
+        note_rows = self.con.execute(f"SELECT ts FROM entries WHERE {pcond} AND (? IS NULL OR agent = ?) AND source_type = 'note'", scope + (agent, agent),).fetchall()
         notes_cnt = sum(1 for r in note_rows if cutoff is None or ((t := _parse_ts(r["ts"])) is not None and t >= cutoff))
         tot_sess = sum(a["sessions"] for a in agents_out)
-        return {"agents": agents_out, "memory_comparison": comp_out, "notes_count": notes_cnt,
-                "notes_per_session": round(notes_cnt / tot_sess, 2) if tot_sess else 0.0}
+        return {"agents": agents_out, "memory_comparison": comp_out, "notes_count": notes_cnt, "notes_per_session": round(notes_cnt / tot_sess, 2) if tot_sess else 0.0}
 
     def close(self):
         if self.con is not None:

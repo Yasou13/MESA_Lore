@@ -24,8 +24,7 @@ app = MCPServer("mesa-lore")
 
 @app.tool(name="memory_index", structured_output=False)
 def memory_index(project: str | None = None, budget_tokens: int = 400) -> str:
-    return _run(project, lambda st, p: st.index(p, budget_tokens=budget_tokens)
-                or f"No memory index for project: {p}")
+    return _run(project, lambda st, p: st.index(p, budget_tokens=budget_tokens) or f"No memory index for project: {p}")
 
 @app.tool(name="memory_search", structured_output=False)
 def memory_search(query: str | list[str] = "", project: str | None = None, budget_tokens: int = 800, kind: str | None = None) -> str:

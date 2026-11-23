@@ -1,7 +1,7 @@
 import json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 from mesa_lore.readers import parse_transcript
-from mesa_lore.store import Store, get_db_path, scan_antigravity
+from mesa_lore.store import Store, get_db_path, ingest_all, scan_antigravity
 
 EVENTS = ("SessionStart", "Stop", "SessionEnd")
 CODEX_TIMEOUTS = {"SessionStart": 30, "Stop": 5, "SessionEnd": 3}
@@ -76,11 +76,7 @@ def run_install(st: Store, home: Path) -> str:
 
     ingested = scan_antigravity(st)
     for root, ag in ((home / ".claude/projects", "claude"), (home / ".codex/sessions", "codex")):
-        for fp in (sorted(root.rglob("*.jsonl")) if root.exists() else ()):
-            try:
-                ingested += st.ingest_file(fp, agent=ag)
-            except Exception:
-                pass
+        ingested += ingest_all(st, sorted(root.rglob("*.jsonl")) if root.exists() else (), ag)
     return f"Installed mesa-lore configs (backup: {backup_dir}) and ingested {ingested} chunks."
 
 def run_uninstall(home: Path) -> str:

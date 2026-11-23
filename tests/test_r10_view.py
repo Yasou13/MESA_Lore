@@ -1,4 +1,4 @@
-import sys
+import io, re, sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -194,3 +194,136 @@ def test_sessions_limit(run):
 def test_unknown_project(run):
     seed().close()
     assert run("view", "nope") == "No memory for nope.\n"
+
+
+def active_todos(project="alpha"):
+    st = Store(get_db_path())
+    try:
+        return [n["text"] for n in st.sections(project, 0)["Open items"]]
+    finally:
+        st.close()
+
+
+def row(nid):
+    st = Store(get_db_path())
+    try:
+        return st.get(nid)
+    finally:
+        st.close()
+
+
+def test_note_add_defaults_to_todo_signed_user(run):
+    out = run("note", "add", "Write tests", "-p", "alpha")
+    assert re.fullmatch(r"Added n_[0-9a-f]{6} to alpha\.\n", out)
+    st = Store(get_db_path())
+    n = st.sections("alpha", 0)["Open items"][0]
+    st.close()
+    assert (n["text"], n["agent"], n["kind"]) == ("Write tests", "user", "todo")
+
+
+def test_note_add_kind_and_current_project(run, monkeypatch):
+    monkeypatch.setattr(cli, "get_project", lambda cwd: "alpha")
+    run("note", "add", "Use WAL", "--kind", "decision")
+    assert "Use WAL" in run("view", "alpha").split("DECISIONS\n")[1]
+
+
+def test_note_add_masks_secrets_and_rejects_empty(run):
+    run("note", "add", "key sk-ant-api03-FAKEKEY1234567890abcdefXYZ", "-p", "alpha")
+    assert "FAKEKEY" not in active_todos()[0]
+    with pytest.raises(SystemExit):
+        run("note", "add", "   ", "-p", "alpha")
+    assert len(active_todos()) == 1
+
+
+def test_note_done_by_number_hides_and_renumbers(run):
+    seed_project().close()
+    assert run("note", "done", "1", "-p", "alpha") == "Done: Write the docs\n"
+    assert run("view", "alpha").split("OPEN ITEMS\n")[1].startswith("  1. Add a release note\n\nDECISIONS")
+    assert row("n_todo000001")["state"] == "superseded"
+
+
+def test_note_done_by_id_and_number_uses_current_project(run, monkeypatch):
+    seed_project().close()
+    st = Store(get_db_path())
+    note(st, "other", "Other todo", "todo", "2026-11-19T09:00:00+00:00", "n_othr000001")
+    st.close()
+    monkeypatch.setattr(cli, "get_project", lambda cwd: "other")
+    run("note", "done", "1")
+    assert row("n_othr000001")["state"] == "superseded" and row("n_todo000001")["state"] == "active"
+    monkeypatch.setattr(cli, "get_project", lambda cwd: "alpha")
+    run("note", "done", "n_todo000002")
+    assert active_todos() == ["Write the docs"]
+
+
+@pytest.mark.parametrize("ref", ["0", "3", "n_deci000001", "n_missing000"])
+def test_note_done_refuses_bad_targets(run, ref):
+    seed_project().close()
+    with pytest.raises(SystemExit) as e:
+        run("note", "done", ref, "-p", "alpha")
+    assert e.value.code and len(active_todos()) == 2 and row("n_deci000001")["state"] == "active"
+
+
+def test_short_id_works_and_ambiguous_is_refused(run):
+    seed_project().close()
+    assert run("note", "rm", "n_deci00", "-y", "-p", "alpha") == "Deleted n_deci00.\n"
+    with pytest.raises(SystemExit) as e:
+        run("note", "done", "n_todo00", "-p", "alpha")
+    assert "Ambiguous" in str(e.value) and len(active_todos()) == 2
+
+
+def test_note_edit_replaces_and_keeps_history(run):
+    seed_project().close()
+    out = run("note", "edit", "n_todo000001", "Write the full docs", "-p", "alpha")
+    assert re.fullmatch(r"Replaced n_todo00 with n_[0-9a-f]{6}\.\n", out)
+    assert active_todos() == ["Add a release note", "Write the full docs"]
+    assert row("n_todo000001")["state"] == "superseded"
+    st = Store(get_db_path())
+    history = st.export("alpha").split("## History")[1]
+    new = next(n for n in st.sections("alpha", 0)["Open items"] if n["text"] == "Write the full docs")
+    st.close()
+    assert "Write the docs" in history and new["agent"] == "user"
+
+
+def test_note_edit_keeps_global_scope(run):
+    seed().close()
+    run("note", "edit", "n_global0001", "Prefer tiny commits", "-p", "alpha")
+    assert "Prefer tiny commits" in run("view").split("PROJECTS")[0]
+
+
+@pytest.mark.parametrize("nid", ["n_handoff001", "n_todo000001"])
+def test_note_edit_refuses_handoff_and_superseded(run, nid):
+    seed_project().close()
+    run("note", "done", "n_todo000001", "-p", "alpha")
+    with pytest.raises(SystemExit):
+        run("note", "edit", nid, "new text", "-p", "alpha")
+    assert row(nid)["text"] != "new text"
+
+
+@pytest.mark.parametrize("answer, kept", [("n\n", True), ("\n", True), ("", True), ("y\n", False), ("YES\n", False)])
+def test_note_rm_asks_first(run, monkeypatch, answer, kept):
+    seed_project().close()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(answer))
+    out = run("note", "rm", "n_todo000001", "-p", "alpha")
+    assert out.startswith("Delete Write the docs? [y/N] ")
+    assert out.endswith("Kept.\n" if kept else "Deleted n_todo00.\n")
+    assert (row("n_todo000001") is not None) == kept
+
+
+def test_note_rm_yes_does_not_prompt(run, monkeypatch):
+    seed_project().close()
+    monkeypatch.setattr(sys, "stdin", None)
+    assert run("note", "rm", "n_todo000001", "-y", "-p", "alpha") == "Deleted n_todo00.\n"
+    assert row("n_todo000001") is None
+
+
+def test_note_rm_stays_in_scope_and_on_notes(run):
+    seed_project().close()
+    st = Store(get_db_path())
+    note(st, "other", "Not yours", "fact", "2026-11-19T09:00:00+00:00", "n_othr000001")
+    with st.con:
+        st.con.execute("INSERT INTO entries (id, project, text, source_type) VALUES ('c_chunk00001', 'alpha', 'chunk', 'user')")
+    st.close()
+    for ref in ("n_othr000001", "c_chunk00001", "h_alpha_s2"):
+        with pytest.raises(SystemExit):
+            run("note", "rm", ref, "-y", "-p", "alpha")
+    assert row("n_othr000001") and row("c_chunk00001") and row("h_alpha_s2")
