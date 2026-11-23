@@ -327,3 +327,37 @@ def test_note_rm_stays_in_scope_and_on_notes(run):
         with pytest.raises(SystemExit):
             run("note", "rm", ref, "-y", "-p", "alpha")
     assert row("n_othr000001") and row("c_chunk00001") and row("h_alpha_s2")
+
+
+def strip_ansi(s):
+    return re.sub(r"\x1b\[\d+m", "", s)
+
+
+def test_colors_on_a_tty_keep_the_golden_text(run, monkeypatch):
+    seed_project().close()
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    out = run("view", "alpha")
+    assert "\x1b[1mOPEN ITEMS\x1b[0m" in out and "\x1b[2mDone" in out and "\x1b[36mNext" in out
+    assert strip_ansi(out) == PROJECT_GOLDEN
+
+
+def test_overview_colors_do_not_change_alignment(run, monkeypatch):
+    seed().close()
+    plain = run("view")
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    out = run("view")
+    assert "\x1b[1mPROJECTS\x1b[0m" in out and "\x1b[36mNext" in out and strip_ansi(out) == plain
+
+
+def test_no_color_env_wins_on_a_tty(run, monkeypatch):
+    seed_project().close()
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert "\x1b" not in run("view", "alpha")
+
+
+def test_no_colors_when_piped(run, monkeypatch):
+    seed_project().close()
+    monkeypatch.delenv("NO_COLOR")
+    assert "\x1b" not in run("view", "alpha")

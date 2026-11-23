@@ -98,7 +98,9 @@ def _export(args, parser):
 
 _EMPTY, _NOTE_KINDS = "No memory yet. Run `mesa-lore install`.", ("decision", "fact", "todo", "failed_attempt")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")  # stored text must not be able to drive the terminal
-_section = lambda title, rows: ["", title, *(rows or ["  (none)"])]
+_ansi = lambda code, s: f"\033[{code}m{s}\033[0m" if sys.stdout.isatty() and "NO_COLOR" not in os.environ else s
+_label = lambda key, pad=0: _ansi(36 if key == "Next" else 2, key.ljust(pad))
+_section = lambda title, rows: ["", _ansi(1, title), *(rows or ["  (none)"])]
 _cols = lambda c: 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
 _width = lambda s: sum(map(_cols, s))
 
@@ -133,8 +135,9 @@ def _overview(st, scopes, width):
             key = next((k for k in ("Next", "Open", "Done") if info.get(k)), "")  # auto handoffs have no Next line
             meta = _fit(f"{_fit(h['agent'] or 'unknown', 12)} · {_ago(ts)}" if h else _ago(ts), width // 3)
             body = _fit(info.get(key), width - name_w - _width(meta) - 12) if key else ""
-            left = f"  {shown}{' ' * (name_w - _width(shown))}  " + (f"{key}: {body}" if key else "")
-            rows.append(f"{left}{' ' * (width - _width(left) - _width(meta))}{meta}")
+            left = f"  {shown}{' ' * (name_w - _width(shown))}  "
+            gap = width - _width(left) - (len(key) + 2 if key else 0) - _width(body) - _width(meta)
+            rows.append(f"{left}{_label(key) + ': ' if key else ''}{body}{' ' * gap}{_ansi(2, meta)}")
         out += _section(title, rows)
     return "\n".join(out)
 
@@ -146,14 +149,14 @@ def _project_view(st, name, sessions, width):
         if "id" not in h:  # auto text holds a copy of the todo from ingest time: show the live one
             info["Open"] = todos[-1]["text"] if todos else ""
         pickup = [f"  {_fit(' · '.join((h['agent'] or 'unknown', 'written by agent' if 'id' in h else 'auto', _ago(h['ts']))), width - 2)}"]
-        pickup += [f"  {k:<11}{_fit(info[k], width - 13)}" for k in ("Done", "Decisions", "Open", "Next") if info.get(k)] or [f"  {_fit(h['text'], width - 2)}"]
-    out = [name, *_section("PICK UP WHERE YOU LEFT OFF", pickup)]
+        pickup += [f"  {_label(k, 11)}{_fit(info[k], width - 13)}" for k in ("Done", "Decisions", "Open", "Next") if info.get(k)] or [f"  {_fit(h['text'], width - 2)}"]
+    out = [_ansi(1, name), *_section("PICK UP WHERE YOU LEFT OFF", pickup)]
     out += _section("OPEN ITEMS", [f"  {i}. {_fit(n['text'], width - 4 - len(str(i)))}" for i, n in enumerate(todos, 1)])
-    out += _section("DECISIONS", [f"  {n['id'][:8]}  {_fit(n['text'], width - 12)}" for n in data["Decisions"]])
+    out += _section("DECISIONS", [f"  {_label(n['id'][:8], 10)}{_fit(n['text'], width - 12)}" for n in data["Decisions"]])
     rows = []
     for s in data["Sessions"]:
         rows.append(f"  {(s['ts'] or 'unknown')[:10]}  {_fit(s['agent'] or 'unknown', width - 14)}")
-        rows += [f"    {k:<7}{_fit(v, width - 11)}" for k, v in (("Asked", s["asked"]), ("Done", _fields(s["text"]).get("Done"))) if v]
+        rows += [f"    {_label(k, 7)}{_fit(v, width - 11)}" for k, v in (("Asked", s["asked"]), ("Done", _fields(s["text"]).get("Done"))) if v]
     return "\n".join(out + _section("SESSIONS", rows))
 
 def _view(args):
