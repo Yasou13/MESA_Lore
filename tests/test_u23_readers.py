@@ -25,7 +25,12 @@ def test_readers_emit_unified_record_format():
         chunks, usages = fn(path)
         assert len(chunks) > 0
         for c in chunks:
-            assert set(c.keys()) == CHUNK_KEYS
+            extras = set(c) - CHUNK_KEYS
+            assert CHUNK_KEYS <= set(c)
+            if c["role"] == "tool":
+                assert {"paths", "changed"} <= extras <= {"paths", "changed", "error"}
+            else:
+                assert not extras
             assert c["role"] in ("user", "assistant", "tool")
             assert isinstance(c["text"], str) and c["text"]
         for u in usages:

@@ -70,7 +70,7 @@ def test_store_export(tmp_path):
     # Sections
     assert "## Decisions" in md
     assert "## Failed Attempts" in md
-    assert "## Todos" in md
+    assert md.index("## Open items") < md.index("## Decisions") < md.index("## Sessions")
     assert "## Facts" in md
     assert "## History" in md
 

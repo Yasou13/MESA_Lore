@@ -1,4 +1,4 @@
-import json, re, shutil, sys
+import json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
 from mesa_lore.readers import parse_transcript
 from mesa_lore.store import Store, get_db_path, scan_antigravity
@@ -9,26 +9,27 @@ CODEX_TIMEOUTS = {"SessionStart": 30, "Stop": 5, "SessionEnd": 3}
 
 def _cmd_parts() -> tuple[str, list[str], str]:
     found = shutil.which("mesa-lore") or str(Path(sys.executable).with_name("mesa-lore"))
-    if Path(found).exists():
-        return found, ["serve"], found
-    return sys.executable, ["-m", "mesa_lore.cli", "serve"], f"{sys.executable} -m mesa_lore.cli"
+    cmd, args = (found, []) if Path(found).exists() else (sys.executable, ["-m", "mesa_lore.cli"])
+    quoted = subprocess.list2cmdline([cmd]) if sys.platform == "win32" else shlex.quote(cmd)
+    return cmd, [*args, "serve"], " ".join([quoted, *args])
 
 
 def _targets(home: Path) -> dict[str, Path]:
-    desk = "Library/Application Support/Claude/claude_desktop_config.json" if sys.platform == "darwin" else ".config/Claude/claude_desktop_config.json"
+    config = {"darwin": home / "Library/Application Support", "win32": Path(os.environ.get("APPDATA") or home / "AppData/Roaming")}.get(sys.platform, home / ".config")
+    desk = config / "Claude/claude_desktop_config.json"
     return {"claude_mcp": home / ".claude.json", "claude_hooks": home / ".claude/settings.json",
             "codex_mcp": home / ".codex/config.toml", "codex_hooks": home / ".codex/hooks.json",
-            "ag_mcp": home / ".gemini/antigravity/mcp_config.json", "desktop_mcp": home / desk}
+            "ag_mcp": home / ".gemini/antigravity/mcp_config.json", "desktop_mcp": desk}
 
 
 TOML_BLOCK_RE = re.compile(r"(?ms)^\[mcp_servers\.mesa-lore\]\s*\n.*?(?=^\[|\Z)")
 
-_ours = lambda g: "mesa-lore" in json.dumps(g) and " hook " in json.dumps(g)  # noqa: E731 - a hook group install added
+_ours = lambda g: " hook " in (text := json.dumps(g)) and ("mesa-lore" in text or "mesa_lore.cli" in text)  # noqa: E731 - a hook group install added
 
 
 def _read_json(path: Path) -> dict:
     try:
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -39,15 +40,12 @@ def _write_json(path: Path, data: dict):
 
 
 def _backup_once(path: Path, backup_dir: Path, manifest: dict):
-    if (key := str(path)) in manifest:
-        return
-    if path.exists():
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        bname = f"{len(manifest)}_{path.name}"
-        shutil.copy2(path, backup_dir / bname)
-        manifest[key] = {"existed": True, "file": bname}
-    else:
-        manifest[key] = {"existed": False, "file": None}
+    if (key := str(path)) not in manifest:
+        backup = f"{len(manifest)}_{path.name}" if path.exists() else None
+        if backup:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup_dir / backup)
+        manifest[key] = {"existed": backup is not None, "file": backup}
 
 
 def run_install(st: Store, home: Path) -> str:
@@ -57,7 +55,6 @@ def run_install(st: Store, home: Path) -> str:
     for p in t.values():
         _backup_once(p, backup_dir, manifest)
     _write_json(manifest_path, manifest)
-
     cmd, args, hook_cmd = _cmd_parts()
     for k in ("claude_mcp", "ag_mcp", "desktop_mcp"):
         d = _read_json(t[k])
@@ -69,11 +66,13 @@ def run_install(st: Store, home: Path) -> str:
         hooks = d.setdefault("hooks", {})
         for ev in EVENTS:
             groups = hooks.setdefault(ev, [])
-            if not any(_ours(g) for g in groups):
-                entry = {"type": "command", "command": f"{hook_cmd} hook {ev} --agent {agent}"}
-                if timeouts:
-                    entry["timeout"] = timeouts[ev]
-                groups.append({"hooks": [entry]})
+            command = f"{hook_cmd} hook {ev} --agent {agent}"
+            existing = next((h for g in groups for h in g.get("hooks", []) if _ours(h)), None)
+            if existing:
+                existing["command"] = command
+            else:
+                timeout = {"timeout": timeouts[ev]} if timeouts else {}
+                groups.append({"hooks": [{"type": "command", "command": command, **timeout}]})
         _write_json(t[k], d)
 
     toml_p = t["codex_mcp"]
@@ -123,7 +122,7 @@ def run_doctor(st: Store, home: Path) -> str:
     t = _targets(home)
     has_mcp = lambda p: "mesa-lore" in _read_json(p).get("mcpServers", {})
     txt = lambda p: p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
-    has_hooks = lambda p: "mesa-lore" in txt(p) and " hook " in txt(p)
+    has_hooks = lambda p: _ours(_read_json(p))
     db_p = get_db_path()
     db_sz = f"{db_p.stat().st_size} B" if db_p.exists() else "missing"
     last_ts = (st.con.execute("SELECT MAX(ts) FROM entries").fetchone() or [None])[0] or "never"
@@ -134,10 +133,13 @@ def run_doctor(st: Store, home: Path) -> str:
         f"Codex MCP: {'OK' if '[mcp_servers.mesa-lore]' in txt(t['codex_mcp']) else 'missing'} | hooks: {'OK (approve with /hooks in Codex)' if has_hooks(t['codex_hooks']) else 'missing'}",
         f"Antigravity MCP: {'OK' if has_mcp(t['ag_mcp']) else 'missing'} | Claude Desktop MCP: {'OK' if has_mcp(t['desktop_mcp']) else 'missing'}",
     ]
-    st.drop_missing_warnings()
     warns = []
     for w in st.warnings():  # a row from an older reader may no longer apply: re-check the file
         found = []
+        if not Path(w["path"]).exists():
+            with st.con:
+                st.con.execute("DELETE FROM ingest_warnings WHERE path = ?", (w["path"],))
+            continue
         try:
             parse_transcript(w["path"], w["agent"], warnings=found)
         except OSError:  # unreadable: keep the warning

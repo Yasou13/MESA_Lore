@@ -12,14 +12,14 @@ def get_queue_path() -> Path:
 def _resolve(item: str):
     """Queue item -> (path, agent). Items are transcript paths or bare session ids."""
     p = Path(item)
+    if p.is_file():
+        return p, "codex" if ".codex" in str(p) or p.name.startswith("rollout-") else "claude"
     if not p.exists() and re.fullmatch(r"[\w-]+", item):
         for agent, pattern in (("codex", f".codex/sessions/**/*{item}*.jsonl"),
                                ("claude", f".claude/projects/**/*{item}*.jsonl")):
             match = next(Path.home().glob(pattern), None)
             if match:
                 return match, agent
-    if p.is_file():
-        return p, "codex" if ".codex" in str(p) or p.name.startswith("rollout-") else "claude"
     return None, None
 
 
@@ -37,7 +37,7 @@ def ingest_pending_files(st: Store) -> int:
         if path:
             try:
                 total += st.ingest_file(path, agent=agent)
-            except OSError:
+            except (OSError, ValueError):
                 pass
     work.unlink()
     q_path.touch()
@@ -150,7 +150,9 @@ def main():
     args = parser.parse_args()
     home = Path(args.home).resolve() if getattr(args, "home", None) else Path.home()
     if getattr(args, "home", None):
-        os.environ["HOME"] = str(home)
+        os.environ.update(HOME=str(home), USERPROFILE=str(home))
+        if sys.platform == "win32":
+            os.environ["APPDATA"] = str(home / "AppData/Roaming")
     if args.command == "serve":
         from mesa_lore.mcp_server import run_server
         run_server()

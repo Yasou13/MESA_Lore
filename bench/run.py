@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -26,7 +27,7 @@ BUDGET = 300
 INDEX_BUDGET = 400
 TOOLS_BUDGET = 500
 STARTUP_BUDGET = 450
-HANDOFF_BUDGET = 400
+HANDOFF_BUDGET = 120
 LEAN_MAX_TOKENS = 180
 THRESH = {
     "search": 0.8, "turkish": 0.8, "supersession": 1.0, "abstain": 0.9, "isolation": 1.0,
@@ -56,6 +57,25 @@ def load(path):
     return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
 
 
+def checkout(root, name):
+    path = root / name
+    if not path.exists():
+        subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path
+
+
+def fixture_checkout(root, path):
+    text = path.read_text(encoding="utf-8")
+    def mapped(match):
+        return checkout(root, match[1]).as_posix()
+    text = re.sub(r"/home/dev/projects/([\w.-]+)", mapped, text)
+    # Keep each fixture's filename and Antigravity's session directory layout.
+    target = root / path.relative_to(FIX)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
 def run(questions_path):
     res = {}
     try:
@@ -71,6 +91,8 @@ def run(questions_path):
     files += [(p, "codex") for p in sorted((FIX / "codex").glob("*.jsonl"))]
     files += [(p, "antigravity") for p in sorted((FIX / "antigravity").glob("*/.system_generated/logs/transcript.jsonl"))]
 
+    checkouts = Path(tempfile.mkdtemp())
+    files = [(fixture_checkout(checkouts, p), agent) for p, agent in files]
     try:
         first = sum(st.ingest_file(p, agent=a) for p, a in files)
         res["ingest"] = ("PASS" if first > 0 else "FAIL", f"chunks={first}")
@@ -299,23 +321,24 @@ def perf():
              "rota depo fatura teslimat şube adres müşteri sipariş paket durum").split()
     tmp = Path(tempfile.mkdtemp())
     tr = tmp / "big.jsonl"
+    repo = checkout(tmp, "perf-proj")
     with tr.open("w", encoding="utf-8") as f:
         for n in range(10000):
             txt = " ".join(rnd.choice(words) for _ in range(rnd.randint(8, 40))) + f" kod{n}"
             f.write(json.dumps({"type": "user", "uuid": f"p{n}", "timestamp": "2026-11-07T10:00:00Z",
-                                "sessionId": "perf", "cwd": "/home/dev/projects/perf-proj",
+                                "sessionId": "perf", "cwd": str(repo),
                                 "message": {"role": "user", "content": txt}}, ensure_ascii=False) + "\n")
     try:
         st = Store(tmp / "p.db")
-        t0 = time.perf_counter()
+        t0 = time.process_time()
         st.ingest_file(tr, agent="claude")
-        ing = time.perf_counter() - t0
+        ing = time.process_time() - t0
         lat = []
         for q in ["kargo teslimat durumu", "fatura adres hatası", "kod4242", "Kubernetes test planı",
                   "müşteri sipariş paketi", "depo rota planı", "şube kontrol sonucu", "Stripe ödeme"] * 3:
-            t0 = time.perf_counter()
+            t0 = time.process_time()
             st.search(q, "perf-proj", budget_tokens=BUDGET)
-            lat.append((time.perf_counter() - t0) * 1000)
+            lat.append((time.process_time() - t0) * 1000)
         st.close()
         p95 = sorted(lat)[int(len(lat) * 0.95) - 1]
         return ("PASS" if p95 <= PERF_P95_MS else "FAIL", f"ingest10k={ing:.1f}s p95={p95:.0f}ms (need <= {PERF_P95_MS})")

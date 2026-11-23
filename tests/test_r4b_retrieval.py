@@ -69,7 +69,7 @@ def test_handoff_fts_no_penalty_yapilan_index_and_clean_files(tmp_path):
         fts_row = st.con.execute("SELECT id FROM entries_fts WHERE id = ?", (h["id"],)).fetchone()
         assert fts_row is not None
         # 2) Clean files line without diff hunk markers
-        files_ln = next(ln for ln in h["text"].splitlines() if ln.startswith("Dosyalar:"))
+        files_ln = next(ln for ln in h["text"].splitlines() if ln.startswith("Files:"))
         assert "build_simple_report.py" in files_ln
         assert "@@" not in files_ln and "+from" not in files_ln and "-old_line" not in files_ln and "\\n" not in files_ln
         # 3) Index shows Yapilan snippet (not Istek boilerplate)

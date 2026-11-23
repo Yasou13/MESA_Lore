@@ -14,7 +14,7 @@ def test_mechanical_handoff_generated_and_idempotent(tmp_path):
             "type": "assistant", "sessionId": "s_h1", "cwd": str(tmp_path), "timestamp": "2026-11-10T10:00:05Z",
             "message": {
                 "role": "assistant", "model": "claude-opus-5-5",
-                "content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": "/repo/src/auth.py"}}],
+                "content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": str(tmp_path / "src/auth.py")}}],
             },
         },
         {
@@ -54,7 +54,7 @@ def test_mechanical_handoff_generated_and_idempotent(tmp_path):
         assert "auth.py" in h["text"]
         assert "tokens.py" in h["text"]
         assert "rate limiter" in h["text"]
-        assert math.ceil(len(h["text"]) / 4) <= 400
+        assert math.ceil(len(h["text"]) / 4) <= 120
 
         # Re-ingest is idempotent (still 1 active handoff)
         assert st.ingest_file(tf, "claude") == 0
@@ -98,7 +98,7 @@ def test_handoff_token_cap_and_secret_masking(tmp_path):
         st.ingest_file(tf, "claude")
         handoffs = [e for e in st.list_entries(tmp_path.name) if e["kind"] == "handoff"]
         assert len(handoffs) == 1
-        assert math.ceil(len(handoffs[0]["text"]) / 4) <= 400
+        assert math.ceil(len(handoffs[0]["text"]) / 4) <= 120
         assert "sk-ant-secretvalue" not in handoffs[0]["text"]
     finally:
         st.close()

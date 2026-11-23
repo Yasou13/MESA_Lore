@@ -34,10 +34,10 @@ def test_v5_to_v7_migration_folds_handoff_fts_once(tmp_path):
 
 
 def test_ingest_resolves_project_once_per_cwd(tmp_path, monkeypatch):
-    # get_project runs `git rev-parse`; it must not run once per transcript line.
+    # _repo_at runs `git rev-parse`; it must not run once per transcript line.
     calls = []
-    real = store_mod.get_project
-    monkeypatch.setattr(store_mod, "get_project", lambda cwd: calls.append(cwd) or real(cwd))
+    real = store_mod._repo_at
+    monkeypatch.setattr(store_mod, "_repo_at", lambda cwd: calls.append(cwd) or real(cwd))
     tf = tmp_path / "s.jsonl"
     tf.write_text("\n".join(json.dumps({
         "type": "user", "sessionId": "s1", "cwd": str(tmp_path), "timestamp": f"2026-11-10T10:00:{i:02d}Z",

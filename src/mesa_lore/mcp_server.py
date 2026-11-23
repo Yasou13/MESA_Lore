@@ -1,4 +1,5 @@
 import asyncio, os
+from contextlib import closing
 from mcp.server.mcpserver import Context, MCPServer
 from mesa_lore.store import Store, get_db_path, get_project, scan_antigravity
 from mesa_lore.text import wrap_untrusted
@@ -15,11 +16,8 @@ TOOL_SPECS = [
 def _run(project, fn) -> str:
     """Open the store, run fn(store, project) and wrap whatever comes back, errors included."""
     try:
-        st = Store(get_db_path())
-        try:
+        with closing(Store(get_db_path())) as st:
             return wrap_untrusted(fn(st, project or get_project(os.getcwd())))
-        finally:
-            st.close()
     except Exception as e:  # noqa: BLE001 - an MCP client should always get wrapped text
         return wrap_untrusted(f"Error: {type(e).__name__}: {e}")
 
@@ -100,9 +98,8 @@ for _s in TOOL_SPECS:  # clients see the compact TOOL_SPECS, not the larger SDK-
 
 def run_server():
     try:
-        st = Store(get_db_path())
-        scan_antigravity(st)
-        st.close()
+        with closing(Store(get_db_path())) as st:
+            scan_antigravity(st)
     except Exception:
         pass
     asyncio.run(app.run_stdio_async())

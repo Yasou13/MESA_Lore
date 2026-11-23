@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from mesa_lore.readers import has_session_start_ctx, parse_transcript
 from mesa_lore.readers.antigravity import discover_transcripts
+from mesa_lore.readers.codex import clean_codex_request
 from mesa_lore.text import FOLD, normalize, fold_tr, tr_stem, mask_secrets, STOP_WORDS, TR_STOP_WORDS, split_text, KIND_LABELS
 
 SCHEMA = """
@@ -57,8 +58,7 @@ def _v11_text_hash(con):
         con.execute("ALTER TABLE entries ADD COLUMN text_hash BLOB")
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_text_hash ON entries(project, text_hash) WHERE text_hash IS NOT NULL")
     rows = con.execute("SELECT id, text FROM entries WHERE source_type NOT IN ('note', 'user') AND LENGTH(text) >= 200 AND text_hash IS NULL").fetchall()
-    if rows:
-        con.executemany("UPDATE entries SET text_hash = ? WHERE id = ?", [(_nh(r[1]), r[0]) for r in rows])
+    con.executemany("UPDATE entries SET text_hash = ? WHERE id = ?", [(_nh(r[1]), r[0]) for r in rows])
 
 
 SCHEMA_VERSION = 11
@@ -87,7 +87,6 @@ def _load_config(home: Path | None = None) -> tuple[set[str], dict[str, str]]:
     aliases = {str(k).strip(): str(v).strip() for k, v in als.items() if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()} if isinstance(als, dict) else {}
     return excl, aliases
 
-
 _load_excluded_projects = lambda home=None: _load_config(home)[0]
 _in_sql = lambda col, vals: f"{col} IN ({','.join('?' * len(vals))})"
 
@@ -95,34 +94,33 @@ _in_sql = lambda col, vals: f"{col} IN ({','.join('?' * len(vals))})"
 def _project_scope(project: str) -> tuple[str, ...]:
     aliases = _load_config()[1]
     canon = aliases.get(project, project)
-    names = [canon] + [k for k, v in aliases.items() if v == canon and k != canon]
-    return tuple(names if project in names else names + [project])
+    return (canon, *(k for k, v in aliases.items() if v == canon and k != canon))
 
 
 def get_db_path() -> Path:
     return Path(p) if (p := os.environ.get("MESA_LORE_DB")) else Path.home() / ".local" / "share" / "mesa-lore" / "lore.db"
 
 
-def get_project(cwd: str | None) -> str:
-    aliases = _load_config()[1]
+def _repo_at(cwd):
     if not cwd:
-        return aliases.get("default", "default")
-    p = Path(cwd)
-    name = p.name or "default"
+        return None
     try:
-        cur = p.resolve() if p.exists() else None
-        while cur and cur != cur.parent:
-            if (cur / ".git").is_file() or (cur / ".git" / "HEAD").exists():  # worktree file or real repo, not an empty dir
-                name = cur.name
-                res = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=cur, capture_output=True, text=True, timeout=2.0,
-                                     env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
-                if res.returncode == 0 and (cd := res.stdout.strip()) and (common := (cur / cd).resolve()).name == ".git":
-                    name = common.parent.name
-                break
-            cur = cur.parent
-    except Exception:
-        pass
-    return aliases.get(name, name)
+        p = Path(cwd).resolve()
+        while not p.is_dir() and p != p.parent:
+            p = p.parent
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        res = subprocess.run(["git", "rev-parse", "--show-toplevel", "--git-common-dir"], cwd=p,
+                             capture_output=True, text=True, timeout=2.0, env=env)
+        if res.returncode == 0:
+            root, git_dir = res.stdout.splitlines()
+            common = (p / git_dir).resolve()
+            return Path(root), common.parent.name if common.name == ".git" else Path(root).name
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def get_project(cwd: str | None) -> str:
+    return _project_scope(repo[1])[0] if (repo := _repo_at(cwd)) else "misc"
 
 
 def get_git_commit(repo: str, file_path: str) -> str | None:
@@ -148,12 +146,6 @@ def check_stale(repo: str | None, file_hashes_json: str | None, cache: dict | No
         return False
 
 
-FILE_CHANGE_RE = re.compile(
-    r'(?:"(?:file_path|path|TargetFile|Path)"\s*:\s*"([^"\n]+)"|\*\*\* (?:Update|Add) File:\s*(\S+))'
-)
-CHANGE_TOOL_RE = re.compile(r"(?i)\S*(?:edit|write|replace|patch)")  # tool chunks start with the tool name; Read/Grep paths are not changes
-
-
 # same-topic rule for replace hints: a change cue + >= 2 shared 5-char stems covering >= half of the shorter note
 SUPERSEDE_CUE_RE = re.compile(r"\b(?:yerine|artik|gecildi|gectik|secildi|degistirildi|iptal|tamamlan\w*|cozuldu|bitti|replaced|switched|changed|migrated|instead|done|fixed|resolved)\b")
 SLASH_WRAP_RE = re.compile(r"(?s)<(command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))>.*?</\1>")
@@ -161,35 +153,38 @@ _sig_words = lambda s: {fold_tr(w)[:5] for w in re.findall(r"\w+", normalize(s))
 _clip = lambda s, n: s if len(s) <= n else s[:n - 3].rstrip() + "..."
 
 
-def _clean_user_prompt(s: str) -> str:
-    s = re.sub(r"</?(?:command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))\b[^<>]*>", " ", SLASH_WRAP_RE.sub(" ", s or "")).strip()
-    if len(s) <= 600:
-        return s
-    body = re.sub(r"</?[\w-]+(?:\s[^<>]*)?>", " ", s)
-    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")[:80].rstrip()
-    return f"{first} [pasted content, ~{len(s)} chars]".strip()
+_SLASH_TAG = re.compile(r"</?(?:command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))\b[^<>]*>")
+_MARKUP = re.compile(r"</?[\w-]+(?:\s[^<>]*)?>")
+_EVAL_PREFIXES = ("you are the answering model", "you are a blind judge")
+_EVAL_RESULT = re.compile(r"\b(?:(?:ans_out|judge_out)_\d+\.json|delta_(?:prim|sec)_out)", re.I)
 
 
-def _fit_snippets(msgs: list[str], max_chars: int, is_user: bool = False) -> str:
-    seen = []
-    for m in msgs:
-        s = re.sub(r"\s+", " ", re.sub(r"</?[\w-]+(?:\s[^<>]*)?>", " ", _clean_user_prompt(m) if is_user else m)).strip()
-        if s and s not in seen:
-            seen.append(s)
-    if not seen:
+def _clean_user_prompt(text):
+    return _SLASH_TAG.sub(" ", SLASH_WRAP_RE.sub(" ", text)).strip()
+
+
+def _one_line(text):
+    return " ".join(_MARKUP.sub(" ", text).split())
+
+
+def _handoff_text(asked="", done="", files="", errors="", open_item=""):
+    done = " ".join(re.split(r"(?<=[.!?])\s+", mask_secrets(done), maxsplit=2)[:2])
+    return "\n".join(f"{label}: {_clip(mask_secrets(value), cap)}" for label, value, cap in (
+        ("Asked", asked, 100), ("Done", done, 140), ("Files", files, 115), ("Errors", errors, 55), ("Open", open_item, 33),
+    ) if value)
+
+
+def _shown_handoff(text, agent):
+    legacy = dict(line.split(": ", 1) for line in text.splitlines() if ": " in line)
+    if "İstek" not in legacy and "Yapılan" not in legacy:
+        return mask_secrets(text)
+    asked = legacy.get("İstek", "").split(" | ", 1)[0]
+    if agent == "codex":
+        asked = clean_codex_request(asked.replace(" ## My request:", "\n## My request:", 1))
+    done = _one_line(legacy.get("Yapılan", "").split(" | ")[-1])
+    if asked.casefold().startswith(_EVAL_PREFIXES) or (not asked and _EVAL_RESULT.search(done)):
         return ""
-    joined = " | ".join(seen)
-    if len(joined) <= max_chars:
-        return joined
-    if len(seen) == 1:
-        return _clip(seen[0], max_chars)
-    head, tail = seen[0][:max_chars // 3], seen[-1][:max_chars // 2]
-    chosen, used = [head], len(head) + len(tail) + 3
-    for mid in seen[1:-1]:
-        if used + len(mid) + 3 <= max_chars:
-            chosen.append(mid)
-            used += len(mid) + 3
-    return _clip(" | ".join(chosen + [tail]), max_chars)
+    return _handoff_text(_one_line(asked), done, open_item=_one_line(legacy.get("Açık todo", "")))
 
 
 def _row_to_dict(r, cache: dict | None = None) -> dict:
@@ -200,7 +195,7 @@ def _row_to_dict(r, cache: dict | None = None) -> dict:
 
 def _parse_ts(ts: str | None) -> float | None:
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() if ts and isinstance(ts, str) else None
+        return datetime.fromisoformat((ts or "").replace("Z", "+00:00")).timestamp() if ts and isinstance(ts, str) else None
     except ValueError:
         return None
 
@@ -257,13 +252,7 @@ class Store:
                     self.con.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)", (ver, now))
 
     def warnings(self) -> list[dict]:
-        return [dict(r) for r in self.con.execute("SELECT path, agent, reason, ts FROM ingest_warnings ORDER BY ts DESC").fetchall()]
-
-    def drop_missing_warnings(self):
-        with self.con:
-            for path in {w["path"] for w in self.warnings() if not Path(w["path"]).exists()}:
-                self.con.execute("DELETE FROM ingest_warnings WHERE path = ?", (path,))
-
+        return [dict(r) for r in self.con.execute("SELECT path, agent, reason, ts FROM ingest_warnings ORDER BY ts DESC")]
     def ingest_file(self, path, agent):
         p = Path(path)
         try:
@@ -272,34 +261,57 @@ class Store:
             st_stat, p_key = None, str(path)
         if st_stat is not None:
             prev = self.con.execute("SELECT size, mtime_ns FROM ingested_files WHERE path = ? AND agent = ?", (p_key, agent)).fetchone()
-            if prev and prev[0] == st_stat.st_size and prev[1] == st_stat.st_mtime_ns:
+            if prev and tuple(prev) == (st_stat.st_size, st_stat.st_mtime_ns):
                 return 0
         warnings, excluded = [], _load_excluded_projects()
         raw_chunks, raw_usages = parse_transcript(path, agent, warnings=warnings)
-        inserted, touched_sessions, proj_cache = 0, set(), {}
+        inserted, sessions = 0, {}
+        sidechain = agent == "claude" and p.parent.name == "subagents"
+        for record in raw_chunks + raw_usages:
+            sessions.setdefault(record["session_id"], []).append(record)
+        cwd_repos = {cwd: _repo_at(cwd) if cwd else None for cwd in {r["cwd"] for r in raw_chunks + raw_usages}}
+        projects = {}
+        for sid, records in sessions.items():
+            if next((_one_line(_clean_user_prompt(c["text"])) for c in records if c.get("role") == "user"), "").casefold().startswith(_EVAL_PREFIXES):
+                continue
+            repo = next((cwd_repos[r["cwd"]] for r in records if cwd_repos[r["cwd"]]), None)
+            if not repo:
+                touched = sorted(((not r.get("changed"), (Path(r["cwd"] or "") / x).parent) for r in records for x in r.get("paths", ()) if r["cwd"] or Path(x).is_absolute()), key=lambda x: x[0])
+                repo = next((found for d in dict.fromkeys(d for _, d in touched) if (found := _repo_at(d))), None)
+            projects[sid] = (_project_scope(repo[1])[0], repo[0]) if repo else ("misc", None)
         with self.con:
             if st_stat is not None:
                 self.con.execute("INSERT OR REPLACE INTO ingested_files (path, agent, size, mtime_ns) VALUES (?, ?, ?, ?)",
                                  (p_key, agent, st_stat.st_size, st_stat.st_mtime_ns))
-            p_str = str(path)
-            if warnings:
-                now = datetime.now(timezone.utc).isoformat()
-                for w in warnings:
-                    self.con.execute("INSERT OR REPLACE INTO ingest_warnings (path, agent, reason, ts) VALUES (?, ?, ?, ?)",
-                                     (p_str, agent, w, now))
-            else:
-                self.con.execute("DELETE FROM ingest_warnings WHERE path = ? AND agent = ?", (p_str, agent))
+            self.con.execute("DELETE FROM ingest_warnings WHERE path = ? AND agent = ?", (str(path), agent))
+            now = datetime.now(timezone.utc).isoformat()
+            self.con.executemany("INSERT OR REPLACE INTO ingest_warnings (path, agent, reason, ts) VALUES (?, ?, ?, ?)",
+                                 [(str(path), agent, w, now) for w in warnings])
+            prior = {}
+            for sid, (project, _) in projects.items():
+                row = self.con.execute("SELECT project FROM entries WHERE session_id = ? AND source_type != 'note' ORDER BY rowid LIMIT 1", (sid,)).fetchone()
+                if row and row[0] != project:
+                    if row[0] == "misc":
+                        if project in excluded:
+                            self.con.execute("DELETE FROM entries_fts WHERE id IN (SELECT id FROM entries WHERE project = 'misc' AND session_id = ? AND source_type != 'note')", (sid,))
+                            self.con.execute("DELETE FROM entries WHERE project = 'misc' AND session_id = ? AND source_type != 'note'", (sid,))
+                            self.con.execute("DELETE FROM usage WHERE project = 'misc' AND session_id = ?", (sid,))
+                        self.con.execute("UPDATE entries SET project = ? WHERE project = 'misc' AND session_id = ? AND source_type != 'note'", (project, sid))
+                        self.con.execute("UPDATE usage SET project = ? WHERE project = 'misc' AND session_id = ?", (project, sid))
+                        self.con.execute("DELETE FROM entries_fts WHERE id IN (SELECT id FROM handoffs WHERE project = 'misc' AND session_id = ?)", (sid,))
+                        self.con.execute("DELETE FROM handoffs WHERE project = 'misc' AND session_id = ?", (sid,))
+                    else:
+                        prior[sid] = row[0]  # Legacy scopes stay where they are.
             for c in raw_chunks:
-                project = proj_cache.get(c["cwd"]) or proj_cache.setdefault(c["cwd"], get_project(c["cwd"]))
+                sid = c["session_id"]
+                if sid not in projects:
+                    continue
+                project = prior.get(sid, projects[sid][0])
                 if not c["text"] or project in excluded or (c["role"] == "tool" and c["text"].split(None, 1)[0] in ("TodoWrite", "Skill", "AskUserQuestion", "ListMcpResourcesTool", "SlashCommand")):
                     continue
-                if c["session_id"]:  # also for already-stored chunks, so migrated sessions get a handoff
-                    touched_sessions.add((project, c["session_id"]))
-                clean_text = mask_secrets(c["text"])
-                if c["role"] == "user":
-                    clean_text = re.sub(r"</?(?:command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))\b[^<>]*>", " ", SLASH_WRAP_RE.sub(" ", clean_text)).strip()
-                    if not clean_text:
-                        continue
+                clean_text = mask_secrets(_clean_user_prompt(c["text"]) if c["role"] == "user" else c["text"])
+                if not clean_text:
+                    continue
                 scope = _project_scope(project)
                 pin = _in_sql("project", scope)
                 for piece_i, piece in enumerate(split_text(clean_text, max_tokens=250)):
@@ -326,7 +338,10 @@ class Store:
                     except OSError:
                         pass
             for u in raw_usages:
-                project = proj_cache.get(u["cwd"]) or proj_cache.setdefault(u["cwd"], get_project(u["cwd"]))
+                sid = u["session_id"]
+                if sid not in projects:
+                    continue
+                project = prior.get(sid, projects[sid][0])
                 if project in excluded:
                     continue
                 self.con.execute(
@@ -339,55 +354,37 @@ class Store:
                     self.con.execute("UPDATE usage SET memory_used = 1 WHERE session_id = ? AND memory_used = 0", (u["session_id"],))
                 if h_used:
                     self.con.execute("UPDATE usage SET handoff_used = 1 WHERE session_id = ? AND handoff_used = 0", (u["session_id"],))
-            for proj, sid in touched_sessions:
-                self._upsert_handoff(proj, sid, agent)
+            for sid, (project, root) in projects.items():
+                project = prior.get(sid, project)
+                if sid and not sidechain and project not in excluded:
+                    self._upsert_handoff(project, sid, agent, sessions[sid], root)
         return inserted
 
-    def _upsert_handoff(self, project: str, session_id: str, agent: str | None):
-        rows = self.con.execute(
-            "SELECT source_type, text, ts, dedupe_key FROM entries WHERE project = ? AND session_id = ? AND source_type != 'note' "
-            "ORDER BY ts ASC, rowid ASC", (project, session_id),
-        ).fetchall()
-        user_by_msg = {}
-        for r in rows:
-            if r["source_type"] == "user" and r["text"]:
-                dk = r["dedupe_key"] or ""
-                base_k = dk.rsplit(":", 1)[0] if ":" in dk else dk
-                user_by_msg[base_k] = f"{user_by_msg[base_k]}\n{r['text']}" if base_k in user_by_msg else r["text"]
-        users = list(user_by_msg.values())
-        assts = [r["text"] for r in rows if r["source_type"] == "assistant" and r["text"]]
-        if not users and not assts:
+    def _upsert_handoff(self, project, session_id, agent, records, root):
+        asked, done, files, errors = "", "", [], ""
+        for c in records:
+            role = c.get("role")
+            if role == "user" and not asked:
+                asked = _one_line(_clean_user_prompt(c["text"]))
+            elif role == "assistant":
+                done = _one_line(c["text"]) or done
+            elif role == "tool":
+                errors = c.get("error") or errors
+                if root and c["changed"]:
+                    for path in c["paths"]:
+                        full = (Path(c["cwd"] or root) / path).resolve()
+                        rel = full.relative_to(root) if full.is_relative_to(root) else None
+                        if rel and rel.parts and not {"tmp", "scratch", "scratch_build", "scratchpad"}.intersection(part.lower() for part in rel.parts):
+                            files.append(rel.as_posix())
+        if not asked and (not done or _EVAL_RESULT.search(done)):
             return
-        files, reads, errs = [], [], []
-        for r in rows:
-            if r["source_type"] == "tool":
-                t = r["text"]
-                is_chg = bool(CHANGE_TOOL_RE.match(t))
-                for m1, m2 in FILE_CHANGE_RE.findall(t):
-                    raw_fp = m2 or m1
-                    fp = re.split(r"(?:\\n|[\r\n]|@@|['\"])", raw_fp)[0].strip()
-                    if not fp or fp.startswith(("+", "-", "@")):
-                        continue
-                    short = "/".join(Path(fp).parts[-2:]) if len(fp) > 35 else fp
-                    dst = files if (m2 or is_chg) else reads
-                    if short and short not in dst:
-                        dst.append(short)
-                for ln in t.splitlines()[1:]:
-                    if re.search(r"(?:\b(?:[A-Z]\w*(?:Error|Exception)|FAILED|Traceback)\b|exited with code [1-9])", ln):
-                        e = _clip(ln.strip(), 80)
-                        if e and e not in errs:
-                            errs.append(e)
-        reads = [f for f in reads if f not in files]
-        todos = [re.sub(r"\s+", " ", r["text"]).strip() for r in self.con.execute(
-            "SELECT text FROM entries WHERE project = ? AND source_type = 'note' AND kind = 'todo' AND state = 'active' ORDER BY ts DESC LIMIT 3", (project,)).fetchall()]
-        parts = [f"{label}: {val}"[:cap] for label, val, cap in (
-            ("İstek", _fit_snippets(users, 420, is_user=True), None), ("Yapılan", _fit_snippets(assts, 600), None),
-            ("Dosyalar", ", ".join(files[:-7:-1]), 200), ("Okunan", ", ".join(reads[:4]), 160),
-            ("Hatalar", "; ".join(errs[:2]), 180), ("Açık todo", "; ".join(todos), 200)) if val]
-        text = mask_secrets("\n".join(parts))
-        if len(text) > 1580:
-            text = text[:1577].rstrip() + "..."
-        ts = max((r["ts"] for r in rows if r["ts"]), default=None) or datetime.now(timezone.utc).isoformat()
+        shown_files = []
+        for f in list(dict.fromkeys(reversed(files)))[:5]:
+            if len(", ".join([*shown_files, f])) <= 115:
+                shown_files.append(f)
+        todo = self.con.execute("SELECT text FROM entries WHERE project = ? AND source_type = 'note' AND kind = 'todo' AND state = 'active' ORDER BY ts DESC LIMIT 1", (project,)).fetchone()
+        text = _handoff_text(asked, done, ", ".join(shown_files), _one_line(errors), _one_line(todo[0]) if todo else "")
+        ts = max((r["ts"] for r in records if r["ts"]), default=None) or datetime.now(timezone.utc).isoformat()
         nid = f"h_{hashlib.sha256(f'{project}:{session_id}'.encode()).hexdigest()[:12]}"
         self.con.execute(
             "INSERT INTO handoffs (id, project, text, session_id, ts, state, agent) VALUES (?, ?, ?, ?, ?, 'active', ?) "
@@ -447,16 +444,14 @@ class Store:
 
     def get(self, id, project=None, before=0, after=0):
         row = self.con.execute(f"SELECT {ENTRY_COLS} FROM entries WHERE id = ?", (id,)).fetchone()
-        is_handoff = row is None
-        if is_handoff:
-            row = self.con.execute(f"SELECT {HANDOFF_COLS} FROM handoffs WHERE id = ?", (id,)).fetchone()
+        row = row or self.con.execute(f"SELECT {HANDOFF_COLS} FROM handoffs WHERE id = ?", (id,)).fetchone()
         if not row or (project is not None and row["project"] not in _project_scope(project) + ("global",)):
             return None
         cache = {}
         out = _row_to_dict(row, cache)
         if before > 0 or after > 0:
             b_list, a_list = [], []
-            if not is_handoff and row["source_type"] != "note" and row["session_id"]:
+            if row["source_type"] != "note" and row["session_id"]:
                 sess = self.con.execute(
                     f"SELECT {ENTRY_COLS} FROM entries WHERE session_id = ? AND project = ? AND source_type != 'note' "
                     "ORDER BY COALESCE(ts, ''), rowid ASC", (row["session_id"], row["project"]),
@@ -470,10 +465,8 @@ class Store:
 
     def _with_prev_assistant(self, r, cap_tokens: int) -> str:
         txt = r["text"]
-        if r["source_type"] != "tool" or not r["session_id"] or r["rid"] is None:
-            return txt
         max_add = min(240, cap_tokens * 4 - len(txt))
-        if max_add < 32:
+        if max_add < 32 or r["source_type"] != "tool" or not r["session_id"] or r["rid"] is None:
             return txt
         prev = self.con.execute(
             "SELECT text FROM entries WHERE session_id = ? AND project = ? AND source_type = 'assistant' "
@@ -490,10 +483,11 @@ class Store:
         return {r["session_id"]: r for r in self.con.execute(f"SELECT id, session_id, ts, text, agent FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
                                                              "AND kind = 'handoff' AND state = 'active' AND session_id IS NOT NULL ORDER BY ts, rowid", scope)}
 
-    def _session_handoffs(self, scope, agent_ho, limit=-1) -> list:
-        """One handoff per session, newest first: agent-written if present, else CPU."""
-        cpu = self.con.execute(f"SELECT session_id, ts, text, agent FROM handoffs WHERE {_in_sql('project', scope)} AND state = 'active' ORDER BY ts DESC LIMIT ?", (*scope, limit)).fetchall()
-        return sorted([*agent_ho.values(), *(h for h in cpu if h["session_id"] not in agent_ho)], key=lambda h: _parse_ts(h["ts"]) or 0.0, reverse=True)
+    def _session_handoffs(self, scope, agent_ho, limit) -> list:
+        cpu = self.con.execute(f"SELECT session_id, ts, text, agent FROM handoffs WHERE {_in_sql('project', scope)} AND state = 'active'", scope)
+        rows = [*agent_ho.values(), *(h for h in cpu if h["session_id"] not in agent_ho)]
+        rows.sort(key=lambda h: _parse_ts(h["ts"]) or 0.0, reverse=True)
+        return [{**h, "text": text} for h in rows if (text := _shown_handoff(h["text"], h["agent"]))][:limit]
 
     def search(self, query, project, budget_tokens=800, kind=None):
         queries = [q for q in (query if isinstance(query, (list, tuple)) else [query]) if isinstance(q, str) and q.strip()]
@@ -661,20 +655,14 @@ class Store:
     def index(self, project, budget_tokens=400):
         scope = _project_scope(project)
         scope_g = scope + ("global",)
-        pin, pin_g = _in_sql("project", scope), _in_sql("project", scope_g)
-        scope_rows = self.con.execute("SELECT project, count(*) as cnt FROM entries GROUP BY project ORDER BY project").fetchall()
-        proj_cnt, global_cnt, others, research = 0, 0, 0, 0
-        for p, cnt in scope_rows:
-            if p == "global":
-                global_cnt += cnt
-            elif p in scope:
-                proj_cnt += cnt
-            elif p.startswith("research:"):
-                research += 1  # research scopes are visible only when asked for directly: count, never names
-            else:
-                others += 1
-        allowed = ([f"global ({global_cnt})"] if global_cnt else []) + ([f"{scope[0]} ({proj_cnt})"] if proj_cnt else [])
-        allowed += [f"+{n} {label}" for n, label in ((others, "other projects"), (research, "research scopes")) if n]
+        pin_g = _in_sql("project", scope_g)
+        counts = dict(self.con.execute("SELECT project, count(*) FROM entries GROUP BY project"))
+        allowed = [f"global ({counts['global']})"] if counts.get("global") else []
+        if count := sum(counts.get(p, 0) for p in scope if p != "global"):
+            allowed.append(f"{scope[0]} ({count})")
+        outside = counts.keys() - set(scope_g)
+        research = sum(p.startswith("research:") for p in outside)
+        allowed += [f"+{n} {label}" for n, label in ((len(outside) - research, "other projects"), (research, "research scopes")) if n]
         scopes_line = "Scopes: " + ", ".join(allowed) if allowed else ""
 
         notes = self.con.execute(f"""
@@ -683,30 +671,25 @@ class Store:
             ORDER BY CASE WHEN kind = 'decision' THEN 0 ELSE 1 END, ts DESC, id DESC
         """, scope_g).fetchall()
         agent_ho = self._agent_handoffs(scope)
-        handoffs = self._session_handoffs(scope, agent_ho, 3 + len(agent_ho))[:3]
-        ho_header = ["Handoffs:"] if handoffs else []  # stats key: marks sessions opened with handoff lines
-        if not handoffs:
-            handoffs = [{"ts": r["ts"], "text": _clean_user_prompt(r["text"])} for r in self.con.execute(f"""
-                SELECT MIN(ts) AS ts, MIN(text) AS text FROM entries
-                WHERE {pin} AND session_id IS NOT NULL AND source_type = 'user' GROUP BY session_id ORDER BY ts DESC LIMIT 3
-            """, scope).fetchall()]
+        handoffs = self._session_handoffs(scope, agent_ho, 3)
         if not scopes_line and not notes and not handoffs:
             return ""
         lines = [scopes_line] if scopes_line else []
         for n in notes[:3]:
             txt = _clip(" ".join(n["text"].split()), 88)
             lines.append(f"- [{n['kind']}] {txt}")
-        lines += ho_header
+        if handoffs:
+            lines.append("Handoffs:")
         for h in handoffs:
             lns = (h["text"] or "").splitlines()
-            yap = next((ln.removeprefix("Yapılan: ").strip() for ln in lns if ln.startswith("Yapılan: ")), "")
-            last_yap = yap.split(" | ")[-1].strip()
-            title = last_yap if len(last_yap) > 15 else (yap if len(yap) > 15 else (lns[0].removeprefix("İstek: ").strip() if lns else ""))
+            done = next((ln[6:] for ln in lns if ln.startswith("Done: ")), "") if h.get("session_id") not in agent_ho else ""
+            title = done if len(done) > 15 else (lns[0].removeprefix("Asked: ") if lns else "")
             title = _clip(re.sub(r"^(?:[#>\-]+|\d+[.)])\s*|\*\*|`", "", title).strip(), 68)  # markdown marks waste startup tokens
             lines.append(f"- {(h['ts'] or '')[:10]}: {title}")
-        if last_a := self.con.execute(f"SELECT session_id, text FROM entries WHERE {pin} AND source_type = 'assistant' ORDER BY ts DESC, rowid DESC LIMIT 1", scope).fetchone():
-            if last_a["session_id"] not in agent_ho and (la := _clip(" ".join(re.sub(r"</?[\w-]+(?:\s[^<>]*)?>", " ", last_a["text"]).split()), 64)):
-                lines.append(f"Last: {la}")
+        if handoffs and handoffs[0]["session_id"] not in agent_ho:
+            latest = next((ln[6:] for ln in handoffs[0]["text"].splitlines() if ln.startswith("Done: ")), "")
+            if latest:
+                lines.append(f"Last: {_clip(latest, 64)}")
         lines.append(f"{f'{len(notes)} notes. ' if notes else ''}Use memory_search / memory_save.")
         cap = min(budget_tokens, 181)
         kept = []
@@ -761,19 +744,24 @@ class Store:
             f"SELECT id, text, kind, state, agent, ts FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' ORDER BY ts ASC, id ASC",
             scope,
         ).fetchall()
-        specs = [("Decisions", "active", "decision"), ("Failed Attempts", "active", "failed_attempt"),
-                 ("Todos", "active", "todo"), ("Facts", "active", "fact"), ("History", "superseded", None)]
+        sections = (("Open items", "active", "todo"), ("Decisions", "active", "decision"), ("Sessions", "", ""),
+                    ("Failed Attempts", "active", "failed_attempt"), ("Facts", "active", "fact"), ("History", "superseded", None))
         out = [f"# {scope[0]}"]
-        for title, st_f, k_f in specs:
-            items = [n for n in notes if n["state"] == st_f and (k_f is None or n["kind"] == k_f)]
-            if items:
+        for title, state, kind in sections:
+            if title == "Sessions":
+                out.append("\n## Sessions")
+                day = None
+                for h in self._session_handoffs(scope, self._agent_handoffs(scope), 30):
+                    if (date := h["ts"][:10] if h["ts"] else "Unknown date") != day:
+                        day = date
+                        out.append(f"\n### {day}")
+                    out.extend(("", f"**{h['agent'] or 'unknown'}**", h["text"]))
+                continue
+            items = [n for n in notes if n["state"] == state and (kind is None or n["kind"] == kind)]
+            if items or title in ("Open items", "Decisions"):
                 out.append(f"\n## {title}")
-                for it in items:
-                    prefix = f"[{it['agent']}] " if it["agent"] else ""
-                    out.append(f"- {prefix}{' '.join(mask_secrets(it['text']).splitlines())}")
-        if sessions := self._session_handoffs(scope, self._agent_handoffs(scope)):
-            out.append("\n## Sessions")
-            out += [f"- {(h['ts'] or 'unknown')[:10]} [{h['agent'] or 'unknown'}] {' '.join(mask_secrets(h['text']).split())}" for h in sessions]
+                out.extend("- {}{}".format("[{}] ".format(it["agent"]) if it["agent"] else "",
+                                           " ".join(mask_secrets(it["text"]).splitlines())) for it in items)
         return "\n".join(out) + "\n"
 
     def stats(self, project: str | None = None, days: int | None = None, agent: str | None = None) -> dict:
@@ -843,6 +831,6 @@ class Store:
                 "notes_per_session": round(notes_cnt / tot_sess, 2) if tot_sess else 0.0}
 
     def close(self):
-        if self.con:
+        if self.con is not None:
             self.con.close()
             self.con = None

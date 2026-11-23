@@ -55,7 +55,7 @@ def test_handoff_files_are_changed_files_latest_first_kept(tmp_path):
     try:
         st.ingest_file(p, "claude")
         text = st.con.execute("SELECT text FROM handoffs WHERE session_id = 'hf1'").fetchone()[0]
-        files_line = next(ln for ln in text.splitlines() if ln.startswith("Dosyalar:"))
+        files_line = next(ln for ln in text.splitlines() if ln.startswith("Files:"))
         assert "only_read.py" not in files_line
         assert "new_file.py" in files_line and "changed_7.py" in files_line
     finally:
@@ -73,7 +73,7 @@ def test_handoff_and_index_title_skip_markup_tags(tmp_path):
     try:
         st.ingest_file(p, "claude")
         text = st.con.execute("SELECT text FROM handoffs WHERE session_id = 'tg1'").fetchone()[0]
-        assert text.startswith("İstek: Role: Checker. Review the round.")
+        assert text.startswith("Asked: Role: Checker. Review the round.")
         assert "Role: Checker" in st.index("app") and "<pasted" not in st.index("app")
     finally:
         st.close()

@@ -38,15 +38,14 @@ def test_item3_clean_user_prompts_slash_tags_and_over_600_chars(tmp_path):
             assert tag not in user_rows[0]
         assert "Check the authentication middleware token rotation." in user_rows[0]
 
-        # 2) User message over 600 chars replaced with first line (max 80 chars) + "[pasted content, ~N chars]" in index and handoff
+        # 2) The handoff contains the first real request. Later pasted context stays searchable.
         ho = st.con.execute("SELECT text FROM handoffs WHERE session_id = 's_clean'").fetchone()[0]
-        assert "[pasted content, ~" in ho
+        assert ho == "Asked: Check the authentication middleware token rotation."
         assert "DETAILED_PASTED_BODY_ENTRY_9911" not in ho
         for tag in ("<command-name>", "<local-command-stdout>", "<local-command-caveat>"):
             assert tag not in ho
         idx = st.index("app")
         assert "DETAILED_PASTED_BODY_ENTRY_9911" not in idx
-        assert "Please review this very long pasted specification and configuration for the gate" in ho
         # Full text remains searchable in entries
         assert st.search("DETAILED_PASTED_BODY_ENTRY_9911", "app")["status"] == "ok"
     finally:
@@ -125,7 +124,7 @@ def test_item5_cpu_handoff_per_session_signals_and_agent_handoff_wins(tmp_path):
          "message": {"role": "user", "content": [
              {"type": "tool_result", "tool_use_id": "t_read", "content": "TAX_RATE = 0.18"},
              {"type": "tool_result", "tool_use_id": "t_edit", "content": "Updated src/billing.py"},
-             {"type": "tool_result", "tool_use_id": "t_bash", "content": "ValueError: negative tax amount in round_tax"},
+             {"type": "tool_result", "tool_use_id": "t_bash", "content": "ValueError: negative tax amount in round_tax", "is_error": True},
          ]}},
         {"type": "assistant", "sessionId": "s_sig", "cwd": "/repo/app", "timestamp": "2026-11-20T10:03:00Z",
          "message": {"role": "assistant", "content": "Fixed round_tax in billing.py and verified tests."}},
@@ -138,13 +137,13 @@ def test_item5_cpu_handoff_per_session_signals_and_agent_handoff_wins(tmp_path):
         ho = st.con.execute("SELECT text FROM handoffs WHERE session_id = 's_sig'").fetchone()[0]
         ho_lines = ho.splitlines()
         # 1) What the user asked (cleaned)
-        assert any(ln.startswith("İstek:") and "Fix the billing tax rounding bug." in ln and "<command-name>" not in ln for ln in ho_lines)
+        assert any(ln.startswith("Asked:") and "Fix the billing tax rounding bug." in ln and "<command-name>" not in ln for ln in ho_lines)
         # 2) Files modified
-        assert any(ln.startswith("Dosyalar:") and "billing.py" in ln and "tax_rules.py" not in ln for ln in ho_lines)
-        # 3) Files read (top few)
-        assert any(ln.startswith("Okunan:") and "tax_rules.py" in ln for ln in ho_lines)
+        assert any(ln.startswith("Files:") and "billing.py" in ln and "tax_rules.py" not in ln for ln in ho_lines)
+        # 3) Read-only files are absent from the handoff.
+        assert "tax_rules.py" not in ho
         # 4) Errors hit
-        assert any(ln.startswith("Hatalar:") and "ValueError: negative tax amount" in ln for ln in ho_lines)
+        assert any(ln.startswith("Errors:") and "ValueError: negative tax amount" in ln for ln in ho_lines)
         # 5) Agent-written handoff wins when present
         st.save_note("app", "Agent handoff: billing tax rounding shipped cleanly.", kind="handoff", session_id="s_sig", agent="claude-code")
         idx = st.index("app")

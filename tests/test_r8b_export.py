@@ -26,7 +26,7 @@ def db_digest(db):  # SQLite may leave an empty -wal and a -shm index beside a W
 
 def seed(db):
     st = Store(db)
-    add_cpu_handoff(st, "app", "old", "2026-11-01T10:00:00Z", f"İstek: old cpu\nYapılan: used {SECRET}")
+    add_cpu_handoff(st, "app", "old", "2026-11-01T10:00:00Z", f"Asked: old cpu\nDone: used {SECRET}")
     add_cpu_handoff(st, "app", "mid", "2026-11-05T10:00:00Z", "cpu text replaced by agent")
     add_cpu_handoff(st, "app", "new", "2026-11-09T10:00:00Z", "newest cpu", "claude")
     add_cpu_handoff(st, "other", "x", "2026-11-02T10:00:00Z", "other project session")
@@ -46,11 +46,13 @@ def test_export_sessions_newest_first_agent_preferred_and_masked(tmp_path):
     st = Store(db)
     md = st.export("app")
     st.close()
-    sessions = md.split("## Sessions\n", 1)[1].splitlines()
-    assert sessions[0] == "- 2026-11-09 [claude] newest cpu"
-    assert sessions[1] == "- 2026-11-07 [claude-code] Done: agent wrote this"
-    assert sessions[2].startswith("- 2026-11-01 [codex] İstek: old cpu Yapılan: used [REDACTED]")
-    assert len(sessions) == 3 and "cpu text replaced" not in md and SECRET not in md
+    sessions = md.split("## Sessions\n", 1)[1]
+    days = [line for line in sessions.splitlines() if line.startswith("### ")]
+    assert days == ["### 2026-11-09", "### 2026-11-07", "### 2026-11-01"]
+    assert "**claude**\nnewest cpu" in sessions
+    assert "**claude-code**\nDone: agent wrote this" in sessions
+    assert "**codex**\nAsked: old cpu\nDone: used [REDACTED]" in sessions
+    assert "cpu text replaced" not in md and SECRET not in md
     assert "other project session" not in md and "## Decisions" in md
 
 
