@@ -1,6 +1,7 @@
 import ast
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
@@ -30,7 +31,9 @@ def test_python_310_to_314_syntax_and_stdlib_compat():
                 raise AssertionError(f"{p}:{node.lineno}: datetime.UTC requires >=3.11; use timezone.utc")
             if hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
                 raise AssertionError(f"{p}:{node.lineno}: PEP 695 `type` statement requires >=3.12")
-            if isinstance(node, ast.JoinedStr):
+            # Before 3.12, ast reports the whole f-string as each expression's position,
+            # and ast.parse above already rejects PEP 701 syntax.
+            if sys.version_info >= (3, 12) and isinstance(node, ast.JoinedStr):
                 seg = ast.get_source_segment(src, node) or ""
                 outer_q = next((q for q in ('"""', "'''", '"', "'") if seg.startswith(("f" + q, "rf" + q, "fr" + q))), None)
                 for val in node.values:
