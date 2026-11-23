@@ -25,8 +25,7 @@ def _v5_usage_handoff(con):
         con.execute("ALTER TABLE usage ADD COLUMN handoff_used INTEGER NOT NULL DEFAULT 0")
 
 def _fts_norm(s: str) -> str:
-    n = normalize(s)
-    f = fold_tr(n)
+    f = fold_tr(n := normalize(s))
     return f"{n}\n{f}" if f != n else n
 
 def _v6_index_handoffs(con):
@@ -55,9 +54,17 @@ def _v11_text_hash(con):
     rows = con.execute("SELECT id, text FROM entries WHERE source_type NOT IN ('note', 'user') AND LENGTH(text) >= 200 AND text_hash IS NULL").fetchall()
     con.executemany("UPDATE entries SET text_hash = ? WHERE id = ?", [(_nh(r[1]), r[0]) for r in rows])
 
-SCHEMA_VERSION = 11
+_SAVED_HANDOFF = re.compile(r"\S*memory_save .*Saved note: (n_\w+) \(kind: handoff", re.S)  # only the memory_save call itself may link a note
+
+def _link_handoffs(con, tool_rows):
+    for sid, text in tool_rows:
+        if m := _SAVED_HANDOFF.match(text):
+            con.execute("UPDATE entries SET session_id = ? WHERE id = ? AND kind = 'handoff' AND session_id IS NULL", (sid, m[1]))
+
+_v12_link_handoffs = lambda con: _link_handoffs(con, con.execute("SELECT session_id, text FROM entries WHERE source_type = 'tool' AND text LIKE '%memory_save %(kind: handoff%'").fetchall())
+SCHEMA_VERSION = 12
 MIGRATIONS = [(1, SCHEMA), (2, V2_WARNINGS), (3, V3_INGESTED_FILES), (4, V4_HANDOFFS), (5, _v5_usage_handoff), (6, _v6_index_handoffs), (7, _v7_fold_fts),
-              (8, V8_SEARCH_INDEXES), (9, V9_DROP_CANDIDATES), (10, V10_STOP_TURNS), (11, _v11_text_hash)]
+              (8, V8_SEARCH_INDEXES), (9, V9_DROP_CANDIDATES), (10, V10_STOP_TURNS), (11, _v11_text_hash), (12, _v12_link_handoffs)]
 ENTRY_COLS = "id, project, text, source_type, kind, session_id, ts, state, verified, stale_hint, repo, file_hashes, agent, model"
 HANDOFF_COLS = "handoffs.id, handoffs.project, handoffs.text, 'note' AS source_type, 'handoff' AS kind, handoffs.session_id, handoffs.ts, handoffs.state, 0 AS verified, 0 AS stale_hint, NULL AS repo, NULL AS file_hashes, handoffs.agent, NULL AS model"
 
@@ -304,6 +311,7 @@ class Store:
                     if cur.rowcount > 0:
                         self.con.execute("INSERT INTO entries_fts (id, text_norm) VALUES (?, ?)", (chunk_id, _fts_norm(f"{agent or ''} {piece}".strip())))
                         inserted += 1
+            _link_handoffs(self.con, [(c["session_id"], c["text"]) for c in raw_chunks if c["role"] == "tool" and c["session_id"] in projects])
             h_used = 0
             if raw_usages:
                 h_used = int(any(has_session_start_ctx(c["text"], ("Handoffs:\n",)) for c in raw_chunks))
@@ -426,7 +434,7 @@ class Store:
         cache = {}
         out = _row_to_dict(row, cache)
         if before > 0 or after > 0:
-            b_list, a_list = [], []
+            out["before"], out["after"] = [], []
             if row["source_type"] != "note" and row["session_id"]:
                 sess = self.con.execute(
                     f"SELECT {ENTRY_COLS} FROM entries WHERE session_id = ? AND project = ? AND source_type != 'note' "
@@ -434,9 +442,8 @@ class Store:
                 ).fetchall()
                 idx = next((i for i, r in enumerate(sess) if r["id"] == id), None)
                 if idx is not None:
-                    b_list = [_row_to_dict(r, cache) for r in sess[max(0, idx - before):idx]] if before > 0 else []
-                    a_list = [_row_to_dict(r, cache) for r in sess[idx + 1:idx + 1 + after]] if after > 0 else []
-            out["before"], out["after"] = b_list, a_list
+                    out["before"] = [_row_to_dict(r, cache) for r in sess[max(0, idx - before):idx]] if before > 0 else []
+                    out["after"] = [_row_to_dict(r, cache) for r in sess[idx + 1:idx + 1 + after]] if after > 0 else []
         return out
 
     def _with_prev_assistant(self, r, cap_tokens: int) -> str:
@@ -455,9 +462,9 @@ class Store:
         return f"{txt}{hdr}{_clip(p, max_add - len(hdr) - 1)}]"
 
     def _agent_handoffs(self, scope) -> dict:
-        """session_id -> newest active agent-written handoff."""
-        return {r["session_id"]: r for r in self.con.execute(f"SELECT id, session_id, ts, text, agent FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
-                                                             "AND kind = 'handoff' AND state = 'active' AND session_id IS NOT NULL ORDER BY ts, rowid", scope)}
+        """session_id (or note id, if it has no session) -> newest active agent-written handoff."""
+        return {r["session_id"] or r["id"]: r for r in self.con.execute(f"SELECT id, session_id, ts, text, agent FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
+                                                             "AND kind = 'handoff' AND state = 'active' ORDER BY ts, rowid", scope)}
 
     def _session_handoffs(self, scope, agent_ho, limit) -> list:
         cpu = self.con.execute(f"SELECT session_id, ts, text, agent FROM handoffs WHERE {_in_sql('project', scope)} AND state = 'active'", scope)
@@ -715,10 +722,8 @@ class Store:
     def sections(self, project, sessions=30) -> dict:
         """Project content shared by export and the CLI view: notes oldest first, sessions newest first."""
         scope = _project_scope(project)
-        notes = self.con.execute(
-            f"SELECT id, text, kind, state, agent, ts FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' ORDER BY ts ASC, id ASC",
-            scope,
-        ).fetchall()
+        notes = self.con.execute(f"SELECT id, text, kind, state, agent, ts FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
+                                 "ORDER BY ts ASC, id ASC", scope).fetchall()
         layout = (("Open items", "active", "todo"), ("Decisions", "active", "decision"), ("Sessions", "", ""),
                   ("Failed Attempts", "active", "failed_attempt"), ("Facts", "active", "fact"), ("History", "superseded", None))
         out = {title: [n for n in notes if n["state"] == state and (kind is None or n["kind"] == kind)] for title, state, kind in layout}
@@ -739,11 +744,7 @@ class Store:
         return sorted(last.items(), key=lambda x: (-x[1], x[0]))
 
     def latest_handoff(self, project) -> dict | None:
-        """Newest handoff, also from agent notes saved without a session. Only agent-written ones have an "id"."""
-        scope = _project_scope(project)
-        loose = self.con.execute(f"SELECT id, session_id, ts, text, agent FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
-                                 "AND kind = 'handoff' AND state = 'active' AND session_id IS NULL ORDER BY ts DESC LIMIT 1", scope).fetchall()
-        return max([*self._session_handoffs(scope, self._agent_handoffs(scope), 1), *map(dict, loose)], key=lambda h: _parse_ts(h["ts"]) or 0.0, default=None)
+        return next(iter(self._session_handoffs(s := _project_scope(project), self._agent_handoffs(s), 1)), None)
 
     def export(self, project):
         out = [f"# {_project_scope(project)[0]}"]

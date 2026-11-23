@@ -14,8 +14,7 @@ def _resolve(item: str):
         return p, "codex" if ".codex" in str(p) or p.name.startswith("rollout-") else "claude"
     if not p.exists() and re.fullmatch(r"[\w-]+", item):
         for agent, pattern in (("codex", f".codex/sessions/**/*{item}*.jsonl"), ("claude", f".claude/projects/**/*{item}*.jsonl")):
-            match = next(Path.home().glob(pattern), None)
-            if match:
+            if match := next(Path.home().glob(pattern), None):
                 return match, agent
     return None, None
 
