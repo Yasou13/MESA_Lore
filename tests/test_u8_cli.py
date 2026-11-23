@@ -55,8 +55,8 @@ def test_cli_list_show_delete_purge(tmp_path, capsys):
     assert st.get(ng, project="my-proj")["text"] == "Global note text"
     st.close()
 
-    # List (includes my-proj and global, excludes other-proj)
-    run_cli(["list", "--project", "my-proj"], env)
+    # `list` was merged into `view`: search keeps this scope check (my-proj and global, not other-proj)
+    run_cli(["search", "note text", "--project", "my-proj"], env)
     out = capsys.readouterr().out
     assert n1 in out
     assert ng in out

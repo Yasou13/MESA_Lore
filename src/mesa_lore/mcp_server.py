@@ -12,7 +12,6 @@ TOOL_SPECS = [
     {"name": "memory_save", "description": "Save note (kind: decision|fact|todo|failed_attempt|handoff).", "inputSchema": {"type": "object", "properties": {"text": _S, "kind": _S, "project": _S, "session_id": _S, "replaces": _S, "files": {"type": "array", "items": _S}, "repo": _S}, "required": ["text", "kind"]}},
 ]
 
-
 def _run(project, fn) -> str:
     """Open the store, run fn(store, project) and wrap whatever comes back, errors included."""
     try:
@@ -21,15 +20,12 @@ def _run(project, fn) -> str:
     except Exception as e:  # noqa: BLE001 - an MCP client should always get wrapped text
         return wrap_untrusted(f"Error: {type(e).__name__}: {e}")
 
-
 app = MCPServer("mesa-lore")
-
 
 @app.tool(name="memory_index", structured_output=False)
 def memory_index(project: str | None = None, budget_tokens: int = 400) -> str:
     return _run(project, lambda st, p: st.index(p, budget_tokens=budget_tokens)
                 or f"No memory index for project: {p}")
-
 
 @app.tool(name="memory_search", structured_output=False)
 def memory_search(query: str | list[str] = "", project: str | None = None, budget_tokens: int = 800, kind: str | None = None) -> str:
@@ -50,7 +46,6 @@ def memory_search(query: str | list[str] = "", project: str | None = None, budge
         return "\n".join(lines)
     return _run(project, search)
 
-
 @app.tool(name="memory_get", structured_output=False)
 def memory_get(id: str = "", project: str | None = None, before: int = 0, after: int = 0) -> str:
     if not id or not id.strip():
@@ -67,7 +62,6 @@ def memory_get(id: str = "", project: str | None = None, before: int = 0, after:
                 out.extend(f"  - [{x['id']}] ({x['source_type']}): {x['text']}" for x in item[label])
         return "\n".join(out)
     return _run(project, get)
-
 
 @app.tool(name="memory_save", structured_output=False)
 def memory_save(text: str = "", kind: str = "", project: str | None = None, session_id: str | None = None,
@@ -90,11 +84,9 @@ def memory_save(text: str = "", kind: str = "", project: str | None = None, sess
         return f"Saved note: {nid} (kind: {kind}, project: {p}){hint}"
     return _run(project, save)
 
-
 for _s in TOOL_SPECS:  # clients see the compact TOOL_SPECS, not the larger SDK-generated schemas
     _t = app._tool_manager.get_tool(_s["name"])
     _t.parameters, _t.description = _s["inputSchema"], _s["description"]
-
 
 def run_server():
     try:
@@ -103,7 +95,6 @@ def run_server():
     except Exception:
         pass
     asyncio.run(app.run_stdio_async())
-
 
 if __name__ == "__main__":
     run_server()

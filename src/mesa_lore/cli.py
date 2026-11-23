@@ -4,10 +4,8 @@ from pathlib import Path
 from mesa_lore.store import Store, _project_scope, get_db_path, get_project, scan_antigravity
 from mesa_lore.text import wrap_untrusted
 
-
 def get_queue_path() -> Path:
     return Path(q) if (q := os.environ.get("MESA_LORE_QUEUE")) else get_db_path().parent / "queue.txt"
-
 
 def _resolve(item: str):
     """Queue item -> (path, agent). Items are transcript paths or bare session ids."""
@@ -21,7 +19,6 @@ def _resolve(item: str):
             if match:
                 return match, agent
     return None, None
-
 
 def ingest_pending_files(st: Store) -> int:
     q_path = get_queue_path()
@@ -43,14 +40,12 @@ def ingest_pending_files(st: Store) -> int:
     q_path.touch()
     return total
 
-
 def _read_hook_json() -> dict:
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
-
 
 def _handle_end_hook():
     data = _read_hook_json()
@@ -63,7 +58,6 @@ def _handle_end_hook():
         with open(q_path, "a", encoding="utf-8") as f:
             f.write(f"{transcript.strip()}\n")
     return data
-
 
 def _handoff_reason(data: dict) -> str | None:
     """Stop-hook block reason, or None. Any doubt (no flag, odd id, no or busy DB) lets the agent stop."""
@@ -79,7 +73,6 @@ def _handoff_reason(data: dict) -> str | None:
     return (f"Before stopping, call memory_save with kind=handoff, session_id={sid}. Text: max 4 lines, "
             "Done / Decisions / Open / Next, no file dumps, under 120 tokens. Then stop.") if due else None
 
-
 def _handle_start_hook(st: Store):
     data = _read_hook_json()
     ingest_pending_files(st)
@@ -87,7 +80,6 @@ def _handle_start_hook(st: Store):
     if idx:  # JSON form is understood by both Claude Code and Codex SessionStart hooks
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": wrap_untrusted(idx)}}, ensure_ascii=False))
-
 
 def _export(args, parser):
     if args.all and (not args.out or args.project):
@@ -106,7 +98,6 @@ def _export(args, parser):
     except sqlite3.OperationalError as e:
         sys.exit(f"export: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
 
-
 def main():
     parser = argparse.ArgumentParser(prog="mesa-lore", description="Local memory layer for coding agents")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -120,7 +111,6 @@ def main():
     p_search.add_argument("--kind", choices=["decision", "fact", "todo", "failed_attempt", "handoff"], default=None, help="Filter by note kind")
     p_index = sub.add_parser("index", help="Show session-start memory index")
     p_index.add_argument("--budget", type=int, default=400, help="Token budget")
-    p_list = sub.add_parser("list", help="List memory entries")
     p_show = sub.add_parser("show", help="Show entry details")
     p_show.add_argument("id", help="Entry ID")
     p_show.add_argument("--before", type=int, default=0, help="Neighbor chunks before")
@@ -137,7 +127,7 @@ def main():
     p_stats.add_argument("--days", type=int, default=None, help="Filter to last N days")
     p_stats.add_argument("--agent", default=None, help="Filter by agent")
     p_stats.add_argument("--json", action="store_true", help="Output as JSON")
-    for p_cmd in (p_search, p_index, p_list, p_show, p_purge):
+    for p_cmd in (p_search, p_index, p_show, p_purge):
         p_cmd.add_argument("--project", default=None, help="Project name")
     sub.add_parser("serve", help="Run MCP stdio server")
     for name, hlp in (("ingest-pending", "Ingest all queued transcripts"), ("install", "Configure MCP/hooks and ingest history"),
@@ -186,9 +176,6 @@ def main():
                     print(f"[{r['id']}] ({r['source_type']}{stale_flag}) {r['text']}")
         elif args.command == "index":
             print(st.index(args.project or get_project(os.getcwd()), budget_tokens=args.budget) or "No memory index.")
-        elif args.command == "list":
-            for e in st.list_entries(args.project):
-                print(f"{e['id']:16} {e['project']:15} {e['source_type']:10} {e['state']:10} {e['text'][:60].replace(chr(10), ' ')}")
         elif args.command == "show":
             e = st.get(args.id, project=args.project or get_project(os.getcwd()), before=args.before, after=args.after)
             print("\n".join(f"{k}: {v}" for k, v in e.items()) if e else f"Not found: {args.id}")
@@ -227,7 +214,6 @@ def main():
                 _handle_start_hook(st)
     finally:
         st.close()
-
 
 if __name__ == "__main__":
     main()

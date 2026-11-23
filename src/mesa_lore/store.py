@@ -24,24 +24,20 @@ def _v5_usage_handoff(con):
     if "handoff_used" not in {r[1] for r in con.execute("PRAGMA table_info(usage)").fetchall()}:
         con.execute("ALTER TABLE usage ADD COLUMN handoff_used INTEGER NOT NULL DEFAULT 0")
 
-
 def _fts_norm(s: str) -> str:
     n = normalize(s)
     f = fold_tr(n)
     return f"{n}\n{f}" if f != n else n
-
 
 def _v6_index_handoffs(con):
     con.execute(V4_HANDOFFS)
     for r in con.execute("SELECT id, text, agent FROM handoffs WHERE id NOT IN (SELECT id FROM entries_fts)").fetchall():
         con.execute("INSERT INTO entries_fts (id, text_norm) VALUES (?, ?)", (r[0], normalize(f"{KIND_LABELS['handoff']} {r[2] or ''} {r[1]}".strip())))  # v7 folds
 
-
 def _v7_fold_fts(con):
     for rid, txt in con.execute("SELECT rowid, text_norm FROM entries_fts").fetchall():
         if (f := fold_tr(txt)) != txt and f not in txt:
             con.execute("UPDATE entries_fts SET text_norm = ? WHERE rowid = ?", (f"{txt}\n{f}", rid))
-
 
 V8_SEARCH_INDEXES = ("CREATE INDEX IF NOT EXISTS idx_entries_replaces ON entries(replaces) WHERE replaces IS NOT NULL;"  # search pair lookup
                      "CREATE INDEX IF NOT EXISTS idx_fts_content_id ON entries_fts_content(c0);"  # entry id -> FTS rowid, no text read
@@ -52,7 +48,6 @@ V9_DROP_CANDIDATES = ("DELETE FROM entries_fts WHERE id IN (SELECT id FROM entri
 V10_STOP_TURNS = "CREATE TABLE IF NOT EXISTS stop_turns (session_id TEXT PRIMARY KEY, turns INTEGER NOT NULL DEFAULT 0, next_block INTEGER NOT NULL DEFAULT 8);"
 _nh = lambda s: hashlib.sha256(" ".join(normalize(s).split()).encode()).digest()[:12]
 
-
 def _v11_text_hash(con):
     if "text_hash" not in {r[1] for r in con.execute("PRAGMA table_info(entries)").fetchall()}:
         con.execute("ALTER TABLE entries ADD COLUMN text_hash BLOB")
@@ -60,13 +55,11 @@ def _v11_text_hash(con):
     rows = con.execute("SELECT id, text FROM entries WHERE source_type NOT IN ('note', 'user') AND LENGTH(text) >= 200 AND text_hash IS NULL").fetchall()
     con.executemany("UPDATE entries SET text_hash = ? WHERE id = ?", [(_nh(r[1]), r[0]) for r in rows])
 
-
 SCHEMA_VERSION = 11
 MIGRATIONS = [(1, SCHEMA), (2, V2_WARNINGS), (3, V3_INGESTED_FILES), (4, V4_HANDOFFS), (5, _v5_usage_handoff), (6, _v6_index_handoffs), (7, _v7_fold_fts),
               (8, V8_SEARCH_INDEXES), (9, V9_DROP_CANDIDATES), (10, V10_STOP_TURNS), (11, _v11_text_hash)]
 ENTRY_COLS = "id, project, text, source_type, kind, session_id, ts, state, verified, stale_hint, repo, file_hashes, agent, model"
 HANDOFF_COLS = "handoffs.id, handoffs.project, handoffs.text, 'note' AS source_type, 'handoff' AS kind, handoffs.session_id, handoffs.ts, handoffs.state, 0 AS verified, 0 AS stale_hint, NULL AS repo, NULL AS file_hashes, handoffs.agent, NULL AS model"
-
 
 def _load_config(home: Path | None = None) -> tuple[set[str], dict[str, str]]:
     cfg = (home or Path.home()) / ".config" / "mesa-lore" / "config.toml"
@@ -90,16 +83,13 @@ def _load_config(home: Path | None = None) -> tuple[set[str], dict[str, str]]:
 _load_excluded_projects = lambda home=None: _load_config(home)[0]
 _in_sql = lambda col, vals: f"{col} IN ({','.join('?' * len(vals))})"
 
-
 def _project_scope(project: str) -> tuple[str, ...]:
     aliases = _load_config()[1]
     canon = aliases.get(project, project)
     return (canon, *(k for k, v in aliases.items() if v == canon and k != canon))
 
-
 def get_db_path() -> Path:
     return Path(p) if (p := os.environ.get("MESA_LORE_DB")) else Path.home() / ".local" / "share" / "mesa-lore" / "lore.db"
-
 
 def _repo_at(cwd):
     if not cwd:
@@ -118,10 +108,8 @@ def _repo_at(cwd):
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
-
 def get_project(cwd: str | None) -> str:
     return _project_scope(repo[1])[0] if (repo := _repo_at(cwd)) else "misc"
-
 
 def get_git_commit(repo: str, file_path: str) -> str | None:
     try:
@@ -129,7 +117,6 @@ def get_git_commit(repo: str, file_path: str) -> str | None:
         return res.stdout.strip() if res.returncode == 0 else None
     except Exception:
         return None
-
 
 def check_stale(repo: str | None, file_hashes_json: str | None, cache: dict | None = None) -> bool:
     """cache: {(repo, file): commit} shared within one call, so N notes on one file run `git log` once."""
@@ -145,34 +132,28 @@ def check_stale(repo: str | None, file_hashes_json: str | None, cache: dict | No
     except Exception:
         return False
 
-
 # same-topic rule for replace hints: a change cue + >= 2 shared 5-char stems covering >= half of the shorter note
 SUPERSEDE_CUE_RE = re.compile(r"\b(?:yerine|artik|gecildi|gectik|secildi|degistirildi|iptal|tamamlan\w*|cozuldu|bitti|replaced|switched|changed|migrated|instead|done|fixed|resolved)\b")
 SLASH_WRAP_RE = re.compile(r"(?s)<(command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))>.*?</\1>")
 _sig_words = lambda s: {fold_tr(w)[:5] for w in re.findall(r"\w+", normalize(s)) if len(w) >= 3 and w not in STOP_WORDS}
 _clip = lambda s, n: s if len(s) <= n else s[:n - 3].rstrip() + "..."
 
-
 _SLASH_TAG = re.compile(r"</?(?:command-(?:name|message|args)|local-command-(?:stdout|stderr|caveat))\b[^<>]*>")
 _MARKUP = re.compile(r"</?[\w-]+(?:\s[^<>]*)?>")
 _EVAL_PREFIXES = ("you are the answering model", "you are a blind judge")
 _EVAL_RESULT = re.compile(r"\b(?:(?:ans_out|judge_out)_\d+\.json|delta_(?:prim|sec)_out)", re.I)
 
-
 def _clean_user_prompt(text):
     return _SLASH_TAG.sub(" ", SLASH_WRAP_RE.sub(" ", text)).strip()
 
-
 def _one_line(text):
     return " ".join(_MARKUP.sub(" ", text).split())
-
 
 def _handoff_text(asked="", done="", files="", errors="", open_item=""):
     done = " ".join(re.split(r"(?<=[.!?])\s+", mask_secrets(done), maxsplit=2)[:2])
     return "\n".join(f"{label}: {_clip(mask_secrets(value), cap)}" for label, value, cap in (
         ("Asked", asked, 100), ("Done", done, 140), ("Files", files, 115), ("Errors", errors, 55), ("Open", open_item, 33),
     ) if value)
-
 
 def _shown_handoff(text, agent):
     legacy = dict(line.split(": ", 1) for line in text.splitlines() if ": " in line)
@@ -186,19 +167,16 @@ def _shown_handoff(text, agent):
         return ""
     return _handoff_text(_one_line(asked), done, open_item=_one_line(legacy.get("Açık todo", "")))
 
-
 def _row_to_dict(r, cache: dict | None = None) -> dict:
     stale = check_stale(r["repo"], r["file_hashes"], cache) or bool(r["stale_hint"])
     return {k: (bool(r[k]) if k == "verified" and r[k] is not None else (stale if k == "stale_hint" else r[k]))
             for k in ("id", "project", "text", "source_type", "kind", "session_id", "ts", "state", "verified", "stale_hint", "agent", "model")}
-
 
 def _parse_ts(ts: str | None) -> float | None:
     try:
         return datetime.fromisoformat((ts or "").replace("Z", "+00:00")).timestamp() if ts and isinstance(ts, str) else None
     except ValueError:
         return None
-
 
 def scan_antigravity(st) -> int:
     cnt = 0
@@ -208,7 +186,6 @@ def scan_antigravity(st) -> int:
         except Exception:
             pass
     return cnt
-
 
 class Store:
     def __init__(self, db_path, read_only=False):
@@ -778,7 +755,7 @@ class Store:
             t_sec = _parse_ts(r["ts"])
             if cutoff is None or (t_sec is not None and t_sec >= cutoff):
                 sessions.setdefault((r["agent"], r["session_id"]), []).append((t_sec, r))
-        by_agent = {}
+        by_agent, add = {}, lambda d, **kw: d.update({k: d[k] + v for k, v in kw.items()})
         comp = {k: dict(sess=0, turns=0, turn_cost=0, starts=0, start_cost=0, f10=0, resumes=0, resume_cost=0)
                 for k in ("with_memory", "without_memory", "with_handoff")}
         for (ag_name, _sid), turns in sessions.items():
@@ -792,23 +769,11 @@ class Store:
             prev_t = None
             for idx, (t_sec, r) in enumerate(turns):
                 cost = r["uncached_input"] + r["cache_write"]
-                ag["turns"] += 1
-                for k in ("uncached_input", "cache_read", "cache_write", "output"):
-                    ag[k] += r[k]
+                resumed = idx > 0 and prev_t is not None and t_sec is not None and t_sec - prev_t > 3600
+                add(ag, turns=1, resume_turns=int(resumed), resume_cost=cost * resumed, **{k: r[k] for k in ("uncached_input", "cache_read", "cache_write", "output")})
                 for b in buckets:
-                    b["turns"] += 1
-                    b["turn_cost"] += cost
-                    b["f10"] += cost if idx < 10 else 0
-                    b["starts"] += int(idx == 0)
-                    b["start_cost"] += cost if idx == 0 else 0
-                if idx > 0 and prev_t is not None and t_sec is not None and (t_sec - prev_t) > 3600:
-                    ag["resume_turns"] += 1
-                    ag["resume_cost"] += cost
-                    for b in buckets:
-                        b["resumes"] += 1
-                        b["resume_cost"] += cost
-                if t_sec is not None:
-                    prev_t = t_sec
+                    add(b, turns=1, turn_cost=cost, f10=cost if idx < 10 else 0, starts=int(idx == 0), start_cost=cost if idx == 0 else 0, resumes=int(resumed), resume_cost=cost * resumed)
+                prev_t = t_sec if t_sec is not None else prev_t
         agents_out = [{
             "agent": ag, **{k: v for k, v in a.items() if k != "resume_cost"},
             "avg_tokens_per_turn": (a["uncached_input"] + a["cache_read"] + a["cache_write"] + a["output"]) // a["turns"] if a["turns"] else 0,

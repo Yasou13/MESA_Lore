@@ -1,17 +1,14 @@
 import json, os, re, sqlite3
 from pathlib import Path
 from urllib.parse import unquote
-from mesa_lore.readers import MEMORY_TOOLS, collect_warning, has_session_start_ctx, make_chunk, make_usage, read_jsonl, tool_chunk
+from mesa_lore.readers import MEMORY_TOOLS, finish, has_session_start_ctx, make_chunk, read_jsonl, tool_chunk
 from mesa_lore.text import trim_tool_output
-
 
 def get_antigravity_brain_dir() -> Path:
     return Path(brain_env) if (brain_env := os.environ.get("ANTIGRAVITY_BRAIN_DIR")) else Path.home() / ".gemini" / "antigravity" / "brain"
 
-
 def discover_transcripts() -> list:
     return sorted(get_antigravity_brain_dir().glob("*/.system_generated/logs/transcript.jsonl"))
-
 
 def parse_antigravity(path, warnings=None):
     p = Path(path)
@@ -90,7 +87,4 @@ def parse_antigravity(path, warnings=None):
                 chunks.append(tool_chunk(session_id, cwd, call.get("ts", ts), f"{session_id}:{suffix}",
                                          call.get("model") or current_model, call.get("name", ""),
                                          call.get("args", ""), content, d.get("is_error") is True))
-
-    out_usages = [make_usage(s, cw, t, ui, cr, cb, out, int(mem_used), dk) for s, cw, t, ui, cr, cb, out, dk in usages]
-    collect_warning(warnings, non_empty, bad, chunks, out_usages)
-    return chunks, out_usages
+    return finish(chunks, usages, mem_used, warnings, non_empty, bad)

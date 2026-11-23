@@ -1,11 +1,10 @@
 import json, re
 from pathlib import Path
-from mesa_lore.readers import MEMORY_TOOLS, collect_warning, has_session_start_ctx, make_chunk, make_usage, read_jsonl, tool_chunk
+from mesa_lore.readers import MEMORY_TOOLS, finish, has_session_start_ctx, make_chunk, read_jsonl, tool_chunk
 from mesa_lore.text import trim_tool_output
 
 # Context Codex adds as "user" messages: AGENTS.md, environment and IDE state.
 CODEX_INJECTED = re.compile(r"\s*(?:# AGENTS\.md instructions|<environment_context>|<user_instructions>|<external_)")
-
 
 def clean_codex_request(text: str) -> str:
     if request := re.search(r"(?m)^## My request:[ \t]*", text):
@@ -20,7 +19,6 @@ def clean_codex_request(text: str) -> str:
         except ValueError:
             pass
     return text
-
 
 def parse_codex(path, warnings=None):
     session_id = Path(path).stem
@@ -80,7 +78,5 @@ def parse_codex(path, warnings=None):
                 chunks.append(tool_chunk(session_id, cwd, call.get("ts", ts), f"{session_id}:{call.get('pos', line_no)}",
                                          call.get("model") or current_model, call.get("name", ""), call.get("args", ""), out,
                                          payload.get("is_error") is True))
-    out_usages = [make_usage(s, cw, t, ui, cr, cb, out, int(mem_used), dk) for s, cw, t, ui, cr, cb, out, dk in usages]
-    if bad or any(d.get("type") != "session_meta" for _, d, _ in lines):  # a rollout with only session_meta has no turns yet
-        collect_warning(warnings, non_empty, bad, chunks, out_usages)
-    return chunks, out_usages
+    has_turns = bad or any(d.get("type") != "session_meta" for _, d, _ in lines)  # a rollout with only session_meta has no turns yet
+    return finish(chunks, usages, mem_used, warnings, non_empty, bad, warn=has_turns)

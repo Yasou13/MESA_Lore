@@ -6,13 +6,11 @@ from mesa_lore.store import Store, get_db_path, scan_antigravity
 EVENTS = ("SessionStart", "Stop", "SessionEnd")
 CODEX_TIMEOUTS = {"SessionStart": 30, "Stop": 5, "SessionEnd": 3}
 
-
 def _cmd_parts() -> tuple[str, list[str], str]:
     found = shutil.which("mesa-lore") or str(Path(sys.executable).with_name("mesa-lore"))
     cmd, args = (found, []) if Path(found).exists() else (sys.executable, ["-m", "mesa_lore.cli"])
     quoted = subprocess.list2cmdline([cmd]) if sys.platform == "win32" else shlex.quote(cmd)
     return cmd, [*args, "serve"], " ".join([quoted, *args])
-
 
 def _targets(home: Path) -> dict[str, Path]:
     config = {"darwin": home / "Library/Application Support", "win32": Path(os.environ.get("APPDATA") or home / "AppData/Roaming")}.get(sys.platform, home / ".config")
@@ -21,11 +19,9 @@ def _targets(home: Path) -> dict[str, Path]:
             "codex_mcp": home / ".codex/config.toml", "codex_hooks": home / ".codex/hooks.json",
             "ag_mcp": home / ".gemini/antigravity/mcp_config.json", "desktop_mcp": desk}
 
-
 TOML_BLOCK_RE = re.compile(r"(?ms)^\[mcp_servers\.mesa-lore\]\s*\n.*?(?=^\[|\Z)")
 
 _ours = lambda g: " hook " in (text := json.dumps(g)) and ("mesa-lore" in text or "mesa_lore.cli" in text)  # noqa: E731 - a hook group install added
-
 
 def _read_json(path: Path) -> dict:
     try:
@@ -33,11 +29,9 @@ def _read_json(path: Path) -> dict:
     except Exception:
         return {}
 
-
 def _write_json(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
 
 def _backup_once(path: Path, backup_dir: Path, manifest: dict):
     if (key := str(path)) not in manifest:
@@ -46,7 +40,6 @@ def _backup_once(path: Path, backup_dir: Path, manifest: dict):
             backup_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, backup_dir / backup)
         manifest[key] = {"existed": backup is not None, "file": backup}
-
 
 def run_install(st: Store, home: Path) -> str:
     backup_dir = home / ".config/mesa-lore/backup"
@@ -90,7 +83,6 @@ def run_install(st: Store, home: Path) -> str:
                 pass
     return f"Installed mesa-lore configs (backup: {backup_dir}) and ingested {ingested} chunks."
 
-
 def run_uninstall(home: Path) -> str:
     """Remove only what install added, from the current files. Backups stay for manual restore."""
     manifest, done = _read_json(home / ".config/mesa-lore/backup/manifest.json"), 0
@@ -116,7 +108,6 @@ def run_uninstall(home: Path) -> str:
             p.write_text(new, encoding="utf-8")
         done += 1
     return f"Uninstalled: removed mesa-lore entries from {done} files. Backups kept in {home / '.config/mesa-lore/backup'}."
-
 
 def run_doctor(st: Store, home: Path) -> str:
     t = _targets(home)
