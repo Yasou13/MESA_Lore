@@ -100,6 +100,8 @@ _EMPTY, _NOTE_KINDS = "No memory yet. Run `mesa-lore install`.", ("decision", "f
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")  # stored text must not be able to drive the terminal
 _ansi = lambda code, s: f"\033[{code}m{s}\033[0m" if sys.stdout.isatty() and "NO_COLOR" not in os.environ else s
 _label = lambda key, pad=0: _ansi(36 if key == "Next" else 2, key.ljust(pad))
+# auto handoffs hold a copy of the todo from ingest time: show the live one, so `note done` clears it
+_handoff_info = lambda st, name, h: {**_fields(h["text"]), **({} if "id" in h else {"Open": next((n["text"] for n in reversed(st.sections(name, 0)["Open items"])), "")})} if h else {}
 _section = lambda title, rows: ["", _ansi(1, title), *(rows or ["  (none)"])]
 _cols = lambda c: 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
 _width = lambda s: sum(map(_cols, s))
@@ -131,7 +133,7 @@ def _overview(st, scopes, width):
         name_w = max(map(_width, names), default=0)
         for shown, (name, ts) in zip(names, group):
             h = st.latest_handoff(name)
-            info = _fields(h["text"]) if h else {}
+            info = _handoff_info(st, name, h)
             key = next((k for k in ("Next", "Open", "Done") if info.get(k)), "")  # auto handoffs have no Next line
             meta = _fit(f"{_fit(h['agent'] or 'unknown', 12)} · {_ago(ts)}" if h else _ago(ts), width // 3)
             body = _fit(info.get(key), width - name_w - _width(meta) - 12) if key else ""
@@ -145,9 +147,7 @@ def _project_view(st, name, sessions, width):
     data, h = st.sections(name, max(sessions, 0)), st.latest_handoff(name)
     todos, pickup = data["Open items"], []
     if h:
-        info = _fields(h["text"])
-        if "id" not in h:  # auto text holds a copy of the todo from ingest time: show the live one
-            info["Open"] = todos[-1]["text"] if todos else ""
+        info = _handoff_info(st, name, h)
         pickup = [f"  {_fit(' · '.join((h['agent'] or 'unknown', 'written by agent' if 'id' in h else 'auto', _ago(h['ts']))), width - 2)}"]
         pickup += [f"  {_label(k, 11)}{_fit(info[k], width - 13)}" for k in ("Done", "Decisions", "Open", "Next") if info.get(k)] or [f"  {_fit(h['text'], width - 2)}"]
     out = [_ansi(1, name), *_section("PICK UP WHERE YOU LEFT OFF", pickup)]

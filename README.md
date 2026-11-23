@@ -44,6 +44,19 @@ mesa-lore uninstall [--home PATH]  # restore backed-up configs and keep the data
 
 ## CLI
 
+Read and manage your memory:
+
+```bash
+mesa-lore view                                # overview: you, projects, research
+mesa-lore view my-app --sessions 10           # one project (`.` = current folder)
+mesa-lore note add "Write the docs" -p my-app # default kind: todo
+mesa-lore note done 1                         # number from OPEN ITEMS, or a note id
+mesa-lore note edit n_1a2b3c "New text"       # the old note goes to history
+mesa-lore note rm n_1a2b3c                    # asks first; -y skips the question
+```
+
+Search, export and maintenance:
+
 ```bash
 mesa-lore search "why did login fail" --project my-app
 mesa-lore index --project my-app

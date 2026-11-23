@@ -1,5 +1,6 @@
 import io, re, sys
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -361,3 +362,23 @@ def test_no_colors_when_piped(run, monkeypatch):
     seed_project().close()
     monkeypatch.delenv("NO_COLOR")
     assert "\x1b" not in run("view", "alpha")
+
+
+def test_readme_shows_each_new_command():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    cli_section = readme.split("## CLI")[1].split("\n## ")[0]
+    assert re.search(r"^mesa-lore view +#", cli_section, re.M)
+    for example in ("mesa-lore view my-app", "mesa-lore note add", "mesa-lore note done", "mesa-lore note edit", "mesa-lore note rm"):
+        assert example in cli_section
+    assert "mesa-lore list" not in readme
+
+
+def test_overview_uses_live_open_item_not_the_auto_copy(run):
+    st = Store(get_db_path())
+    note(st, "beta", "Current todo", "todo", "2026-11-20T09:00:00+00:00", "n_todo000009")
+    auto_handoff(st, "beta", "s1", "Asked: a\nDone: finished work\nOpen: Current todo", "codex", "2026-11-23T11:00:00Z")
+    st.close()
+    assert "Open: Current todo" in run("view")
+    run("note", "done", "1", "-p", "beta")
+    out = run("view")
+    assert "Current todo" not in out and "Done: finished work" in out
