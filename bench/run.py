@@ -351,7 +351,10 @@ def main():
     ap.add_argument("--require", default="")
     ap.add_argument("--questions", default=str(HERE / "dev.jsonl"))
     a = ap.parse_args()
-    res = run(Path(a.questions))
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as work:
+        tempfile.tempdir = work  # every mkdtemp in this run lands here and is removed with it
+        res = run(Path(a.questions))
+    tempfile.tempdir = None
     for k in ALL + ["markdown_baseline"]:
         s, d = res.get(k, ("SKIP", "not run"))
         print(f"{k:17} {s:4} {d}")

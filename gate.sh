@@ -18,15 +18,15 @@ db_stat() {
 }
 
 echo "== locked paths"
-if git rev-parse -q --verify refs/tags/lore-baseline-10 >/dev/null; then
-  if ! git diff --quiet lore-baseline-10 -- $LOCKED; then
-    echo "FAIL: locked paths changed"; git diff --stat lore-baseline-10 -- $LOCKED; fail=1
+if git rev-parse -q --verify refs/tags/lore-baseline-10a >/dev/null; then
+  if ! git diff --quiet lore-baseline-10a -- $LOCKED; then
+    echo "FAIL: locked paths changed"; git diff --stat lore-baseline-10a -- $LOCKED; fail=1
   fi
   if [ -n "$(git ls-files --others --exclude-standard -- $LOCKED)" ]; then
     echo "FAIL: new files under locked paths"; fail=1
   fi
 else
-  echo "FAIL: tag lore-baseline-10 missing"; fail=1
+  echo "FAIL: tag lore-baseline-10a missing"; fail=1
 fi
 
 db_before=$(db_stat)
