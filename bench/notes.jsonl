@@ -1,0 +1,7 @@
+{"key": "n1", "project": "kargo-api", "kind": "decision", "text": "Veritabanı olarak PostgreSQL seçildi.", "session_id": "a1", "quote": "PostgreSQL'e karar verdik", "agent": "claude-code"}
+{"key": "n2", "project": "kargo-api", "kind": "decision", "text": "Veritabanı: MVP için PostgreSQL yerine SQLite kullanılacak (kurulum kolaylığı).", "session_id": "a2", "quote": "MVP için PostgreSQL yerine SQLite kullanacağız", "replaces": "n1", "agent": "claude-code"}
+{"key": "n3", "project": "kargo-api", "kind": "failed_attempt", "text": "Redis cache denendi, bağlantı hataları yüzünden bırakıldı.", "session_id": "a2", "quote": "redis cache   denedik ama ÇALIŞMADI", "agent": "claude-code"}
+{"key": "n4", "project": "kargo-api", "kind": "fact", "text": "Kullanıcı mesaj kuyruğu için Kafka istedi.", "session_id": "a2", "quote": "Kafka kullanalım", "agent": "codex-mcp-client"}
+{"key": "n5", "project": "global", "kind": "fact", "text": "Kullanıcı kısa cevap sever, uzun açıklama istemez.", "session_id": null, "quote": null, "agent": "claude-code"}
+{"key": "n6", "project": "research:agent-memory", "kind": "fact", "text": "LongMemEval sonuçları: Zep yaklaşık %64, Mem0 yaklaşık %49.", "session_id": null, "quote": null, "agent": "claude-code"}
+{"key": "n7", "project": "kargo-api", "kind": "todo", "text": "Kargo iade akışı için endpoint yazılacak.", "session_id": null, "quote": null, "agent": "codex-mcp-client"}

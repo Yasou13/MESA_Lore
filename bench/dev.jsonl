@@ -1,0 +1,51 @@
+{"id": "d01", "category": "supersession", "project": "kargo-api", "query": "veritabanı kararı", "expect": "ok", "top1_contains": ["SQLite"]}
+{"id": "d02", "category": "supersession", "project": "kargo-api", "query": "ilk seçilen veritabanı PostgreSQL", "expect": "ok", "any_contains": ["PostgreSQL"]}
+{"id": "d03", "category": "search", "project": "kargo-api", "query": "refresh token süresi", "expect": "ok", "any_contains": ["7 gün"]}
+{"id": "d04", "category": "search", "project": "kargo-api", "query": "login testi neden hata verdi", "expect": "ok", "any_contains": ["timeout"]}
+{"id": "d05", "category": "search", "project": "kargo-api", "query": "Redis cache neden bırakıldı", "expect": "ok", "any_contains": ["bağlantı"]}
+{"id": "d06", "category": "search", "project": "kargo-api", "query": "kargo takip numarası formatı", "expect": "ok", "any_contains": ["KRG-"]}
+{"id": "d07", "category": "search", "project": "kargo-api", "query": "kaç test geçti", "expect": "ok", "any_contains": ["12 passed"]}
+{"id": "d08", "category": "turkish", "project": "kargo-api", "query": "VERİTABANINI hangisine geçirdik", "expect": "ok", "any_contains": ["SQLite"]}
+{"id": "d09", "category": "turkish", "project": "kargo-api", "query": "DAKİKADA KAÇ İSTEK", "expect": "ok", "any_contains": ["60"]}
+{"id": "d10", "category": "turkish", "project": "kargo-api", "query": "sınırlar", "expect": "ok", "any_contains": ["60"]}
+{"id": "d11", "category": "search", "project": "tez-notlari", "query": "tez teslim tarihi", "expect": "ok", "any_contains": ["15 Ocak"]}
+{"id": "d12", "category": "search", "project": "tez-notlari", "query": "danışman hoca kim", "expect": "ok", "any_contains": ["Ayşe"]}
+{"id": "d13", "category": "search", "project": "tez-notlari", "query": "kısa cevap tercihi", "expect": "ok", "any_contains": ["kısa cevap"]}
+{"id": "d14", "category": "abstain", "project": "kargo-api", "query": "Kubernetes deployment planı", "expect": "no_match"}
+{"id": "d15", "category": "abstain", "project": "kargo-api", "query": "Stripe ödeme entegrasyonu", "expect": "no_match"}
+{"id": "d16", "category": "isolation", "project": "tez-notlari", "query": "JWT refresh token", "expect": "no_match"}
+{"id": "d17", "category": "isolation", "project": "kargo-api", "query": "MongoDB şema", "expect": "no_match"}
+{"id": "d18", "category": "abstain", "project": "kargo-api", "query": "React frontend bileşenleri", "expect": "no_match"}
+{"id": "d19", "category": "abstain", "project": "tez-notlari", "query": "literatür taraması için Zotero ayarı", "expect": "no_match"}
+{"id": "d20", "category": "longchunk", "project": "kargo-api", "query": "webhook imzası nasıl doğrulanıyor", "expect": "ok", "any_contains": ["HMAC-SHA256"]}
+{"id": "d21", "category": "longchunk", "project": "kargo-api", "query": "delivery_eta hangi migration ile eklendi", "expect": "ok", "any_contains": ["0042"]}
+{"id": "d22", "category": "abstain", "project": "kargo-api", "query": "Kubernetes test planı", "expect": "no_match"}
+{"id": "d23", "category": "abstain", "project": "kargo-api", "query": "Stripe kullanıcı verisi", "expect": "no_match"}
+{"id": "d24", "category": "abstain", "project": "kargo-api", "query": "Terraform dosya yapısı kontrolü", "expect": "no_match"}
+{"id": "d25", "category": "search", "project": "kargo-api", "query": "login testindeki timeout hatası", "expect": "ok", "any_contains": ["timeout"]}
+{"id": "d26", "category": "kind", "project": "kargo-api", "query": "veritabanı", "kind": "decision", "expect": "ok", "top1_contains": ["SQLite"]}
+{"id": "d27", "category": "kind", "project": "kargo-api", "query": "Redis cache", "kind": "failed_attempt", "expect": "ok", "any_contains": ["bağlantı"]}
+{"id": "d28", "category": "kind", "project": "kargo-api", "query": "iade endpoint", "kind": "todo", "expect": "ok", "any_contains": ["iade"]}
+{"id": "d29", "category": "kind", "project": "kargo-api", "query": "Redis cache", "kind": "todo", "expect": "no_match"}
+{"id": "d30", "category": "isolation", "project": "kargo-api", "query": "LongMemEval Zep skoru", "expect": "no_match"}
+{"id": "d31", "category": "scopes", "project": "research:agent-memory", "query": "LongMemEval Zep skoru", "expect": "ok", "any_contains": ["%64"]}
+{"id": "d32", "category": "natural", "project": "kargo-api", "query": "Acaba bu projede refresh token geçerlilik süresi kaç gün nedir?", "expect": "ok", "any_contains": ["7 gün"]}
+{"id": "d33", "category": "natural", "project": "kargo-api", "query": "Kullanıcı istek sınırı dakikada kaç olarak belirlendi, neydi acaba?", "expect": "ok", "any_contains": ["60"]}
+{"id": "d34", "category": "natural", "project": "tez-notlari", "query": "Acaba tez teslim tarihi hangi gün olarak belirlendi, nedir?", "expect": "ok", "any_contains": ["15 Ocak"]}
+{"id": "d35", "category": "natural", "project": "kargo-api", "query": "What environment variable is used when verifying HMAC-SHA256 using webhook secret?", "expect": "ok", "any_contains": ["WEBHOOK_SECRET"]}
+{"id": "d36", "category": "natural", "project": "kargo-api", "query": "Which migration number was used to introduce the delivery_eta column?", "expect": "ok", "any_contains": ["0042"]}
+{"id": "d37", "category": "crossagent", "project": "kargo-api", "query": "Codex kargo takip numarası doğrulamasını nereye ekledi?", "expect": "ok", "any_contains": ["shipping/tracking.py"]}
+{"id": "d38", "category": "crossagent", "project": "kargo-api", "query": "codex-mcp-client hangi mesaj kuyruğu bilgisini kaydetti?", "expect": "ok", "any_contains": ["Kafka"]}
+{"id": "d39", "category": "supersession", "project": "kargo-api", "query": "Veritabanı olarak ilk başta ne seçildi?", "expect": "ok", "any_contains": ["PostgreSQL seçildi", "SQLite kullanılacak"]}
+{"id": "d40", "category": "supersession", "project": "kargo-api", "query": "MVP için SQLite kurulum kolaylığı kararı neden alındı?", "expect": "ok", "any_contains": ["PostgreSQL seçildi", "kurulum kolaylığı"]}
+{"id": "d41", "category": "multiquery", "project": "kargo-api", "queries": ["parola sıfırlama e-postası şablonu", "refresh token süresi kaç gün"], "expect": "ok", "any_contains": ["7 gün"]}
+{"id": "d42", "category": "multiquery", "project": "tez-notlari", "queries": ["anket katılımcı dağılımı tablosu", "tez danışmanım teslim tarihi"], "expect": "ok", "any_contains": ["15 Ocak"]}
+{"id": "d43", "category": "softening", "project": "kargo-api", "query": "kod dolabı ne tanımlandı", "expect": "ok", "any_contains": ["EMANET-9"]}
+{"id": "d44", "category": "softening", "project": "kargo-api", "query": "kurye el kitap yedekleme periyot", "expect": "ok", "any_contains": ["6 saat"]}
+{"id": "d45", "category": "softening", "project": "kargo-api", "query": "kontrol kağıdı hangi boyut var", "expect": "ok", "any_contains": ["A6"]}
+{"id": "d46", "category": "antigravity", "project": "kargo-api", "query": "gümrük beyannamesi öneki ağırlık tavanı", "expect": "ok", "any_contains": ["CN23-TR", "30kg"]}
+{"id": "d47", "category": "antigravity", "project": "kargo-api", "query": "test_customs tarife kodu doğrulandı", "expect": "ok", "any_contains": ["GTIP-8471"]}
+{"id": "d48", "category": "toolinput", "project": "kargo-api", "query": "shipping/tariffs.py desi_carpani", "expect": "ok", "any_contains": ["desi_carpani=3000"]}
+{"id": "d49", "category": "spread", "project": "depo-sync", "query": "kuyruk ölü mektup dead-letter ayarı", "expect": "ok", "any_contains": ["PART1_DLQ_MAX_RETRY=4", "PART2_DLQ_STREAM=depo.dlq.v2"]}
+{"id": "d50", "category": "spread", "project": "depo-sync", "query": "sağlık kontrolü healthcheck eşiği", "expect": "ok", "any_contains": ["HC_INTERVAL_SEC=15", "HC_FAIL_THRESHOLD=3"]}
+{"id": "d51", "category": "spread", "project": "depo-sync", "query": "telemetri sıkıştırma algoritması", "expect": "ok", "top1_contains": ["ZSTD_LEVEL_3"]}

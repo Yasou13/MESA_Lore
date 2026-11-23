@@ -1,0 +1,5 @@
+{not valid json
+["just", "a", "json", "array"]
+{"unrelated": 123, "foo": "bar"}
+broken line four without braces
+12345

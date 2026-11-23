@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "r4s4-1", "timestamp": "2026-11-10T13:00:00Z", "sessionId": "r4s4", "cwd": "/home/dev/projects/depo-sync", "message": {"role": "user", "content": "Başarısız healthcheck deneme sınırı kaç?"}}
+{"type": "assistant", "uuid": "r4s4-2", "timestamp": "2026-11-10T13:00:10Z", "sessionId": "r4s4", "cwd": "/home/dev/projects/depo-sync", "message": {"role": "assistant", "model": "claude-opus-5-5", "content": [{"type": "text", "text": "Sağlık kontrolü healthcheck eşiği ikinci bölümde HC_FAIL_THRESHOLD=3 olarak tanımlandı."}]}}

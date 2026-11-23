@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Local memory databases (the schema fixture is synthetic)
+*.db
+*.db-*
+!bench/fixtures/*.db
+
+# Evaluation and temporary outputs
+eval/
+eval-*/
+*.log
+tmp/
+.env
+.env.*

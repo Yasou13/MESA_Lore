@@ -1,0 +1,8 @@
+{"timestamp": "2026-11-06T10:00:00Z", "type": "session_meta", "payload": {"id": "c1", "timestamp": "2026-11-06T10:00:00Z", "cwd": "/home/dev/projects/kargo-api", "originator": "codex_cli_rs", "cli_version": "0.80.0", "instructions": "(AGENTS.md)", "source": "cli", "model_provider": "openai", "git": {"commit_hash": "abc123", "branch": "main"}}}
+{"timestamp": "2026-11-06T10:00:01Z", "type": "turn_context", "payload": {"cwd": "/home/dev/projects/kargo-api", "model": "gpt-6.1-sol", "approval_policy": "on-request"}}
+{"timestamp": "2026-11-06T10:00:05Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Kargo takip numarası formatı: KRG- ile başlasın, ardından 10 haneli rakam gelsin."}]}}
+{"timestamp": "2026-11-06T10:00:30Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Takip numarası doğrulamasını shipping/tracking.py içine KRG-\\d{10} kalıbıyla ekliyorum."}]}}
+{"timestamp": "2026-11-06T10:01:00Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell_command", "arguments": "{\"command\":\"pytest -q\"}", "call_id": "f1"}}
+{"timestamp": "2026-11-06T10:01:20Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "f1", "output": "............ 12 passed in 0.8s"}}
+{"timestamp": "2026-11-06T10:02:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "GitHub token: ghp_FAKEtoken00000000000000000000000000AB deploy scriptine ekle."}]}}
+{"timestamp": "2026-11-06T10:02:05Z", "type": "event_msg", "payload": {"type": "token_count", "info": null}}

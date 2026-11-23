@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "r4s2-1", "timestamp": "2026-11-10T11:00:00Z", "sessionId": "r4s2", "cwd": "/home/dev/projects/depo-sync", "message": {"role": "user", "content": "Ölü mektup hedef stream adı ne olsun?"}}
+{"type": "assistant", "uuid": "r4s2-2", "timestamp": "2026-11-10T11:00:10Z", "sessionId": "r4s2", "cwd": "/home/dev/projects/depo-sync", "message": {"role": "assistant", "model": "claude-opus-5-5", "content": [{"type": "text", "text": "Kuyruk ölü mektup dead-letter ayarı ikinci bölümde PART2_DLQ_STREAM=depo.dlq.v2 olarak belirlendi."}]}}

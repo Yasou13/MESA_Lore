@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesa-lore"
+version = "0.1.0"
+description = "Local, CPU-only memory layer for coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+    "mcp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/Yasou13/MESA_Lore"
+Issues = "https://github.com/Yasou13/MESA_Lore/issues"
+
+[project.scripts]
+mesa-lore = "mesa_lore.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
