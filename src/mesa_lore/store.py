@@ -112,7 +112,7 @@ def get_project(cwd: str | None) -> str:
     try:
         cur = p.resolve() if p.exists() else None
         while cur and cur != cur.parent:
-            if (cur / ".git").exists():
+            if (cur / ".git").is_file() or (cur / ".git" / "HEAD").exists():  # worktree file or real repo, not an empty dir
                 name = cur.name
                 res = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=cur, capture_output=True, text=True, timeout=2.0,
                                      env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
