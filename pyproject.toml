@@ -20,7 +20,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Yasou13/MESA_Lore"
+Homepage = "https://mesamemory.dev/lore/"
+Repository = "https://github.com/Yasou13/MESA_Lore"
 Issues = "https://github.com/Yasou13/MESA_Lore/issues"
 
 [project.scripts]

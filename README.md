@@ -1,12 +1,10 @@
-<p align="center">
-  <img src="assets/logo.png" width="120" alt="mesa-lore logo">
-</p>
-
 # mesa-lore
 
 mesa-lore is a local, CPU-only memory layer for coding agents. It indexes past session transcripts and short agent
 notes in one SQLite file, then lets a new session pull back only what it needs, in small pieces, with sources. It makes
 no LLM calls, uses no embeddings, and needs no network at runtime.
+
+**Website:** [mesamemory.dev/lore](https://mesamemory.dev/lore/) · [Türkçe](https://mesamemory.dev/tr/lore/)
 
 ## Why
 
