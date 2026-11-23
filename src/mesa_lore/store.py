@@ -715,27 +715,45 @@ class Store:
         cache = {}
         return [_row_to_dict(r, cache) for r in self.con.execute(sql, prms + prms).fetchall()]
 
-    def export(self, project):
+    def sections(self, project, sessions=30) -> dict:
+        """Project content shared by export and the CLI view: notes oldest first, sessions newest first."""
         scope = _project_scope(project)
         notes = self.con.execute(
             f"SELECT id, text, kind, state, agent, ts FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' ORDER BY ts ASC, id ASC",
             scope,
         ).fetchall()
-        sections = (("Open items", "active", "todo"), ("Decisions", "active", "decision"), ("Sessions", "", ""),
-                    ("Failed Attempts", "active", "failed_attempt"), ("Facts", "active", "fact"), ("History", "superseded", None))
-        out = [f"# {scope[0]}"]
-        for title, state, kind in sections:
+        layout = (("Open items", "active", "todo"), ("Decisions", "active", "decision"), ("Sessions", "", ""),
+                  ("Failed Attempts", "active", "failed_attempt"), ("Facts", "active", "fact"), ("History", "superseded", None))
+        out = {title: [n for n in notes if n["state"] == state and (kind is None or n["kind"] == kind)] for title, state, kind in layout}
+        out["Sessions"] = self._session_handoffs(scope, self._agent_handoffs(scope), sessions)
+        return out
+
+    def scopes(self) -> list[tuple]:
+        """[(scope, last activity)] newest first, aliases merged."""
+        last = {}
+        for p, ts in self.con.execute("SELECT project, MAX(ts) FROM entries GROUP BY project UNION ALL SELECT project, MAX(ts) FROM handoffs GROUP BY project"):
+            last[name] = max(last.get(name := _project_scope(p)[0], 0.0), _parse_ts(ts) or 0.0)
+        return sorted(last.items(), key=lambda x: (-x[1], x[0]))
+
+    def latest_handoff(self, project) -> dict | None:
+        """Newest handoff, also from agent notes saved without a session. Only agent-written ones have an "id"."""
+        scope = _project_scope(project)
+        loose = self.con.execute(f"SELECT id, session_id, ts, text, agent FROM entries WHERE {_in_sql('project', scope)} AND source_type = 'note' "
+                                 "AND kind = 'handoff' AND state = 'active' AND session_id IS NULL ORDER BY ts DESC LIMIT 1", scope).fetchall()
+        return max([*self._session_handoffs(scope, self._agent_handoffs(scope), 1), *map(dict, loose)], key=lambda h: _parse_ts(h["ts"]) or 0.0, default=None)
+
+    def export(self, project):
+        out = [f"# {_project_scope(project)[0]}"]
+        for title, items in self.sections(project).items():
             if title == "Sessions":
                 out.append("\n## Sessions")
                 day = None
-                for h in self._session_handoffs(scope, self._agent_handoffs(scope), 30):
+                for h in items:
                     if (date := h["ts"][:10] if h["ts"] else "Unknown date") != day:
                         day = date
                         out.append(f"\n### {day}")
                     out.extend(("", f"**{h['agent'] or 'unknown'}**", h["text"]))
-                continue
-            items = [n for n in notes if n["state"] == state and (kind is None or n["kind"] == kind)]
-            if items or title in ("Open items", "Decisions"):
+            elif items or title in ("Open items", "Decisions"):
                 out.append(f"\n## {title}")
                 out.extend("- {}{}".format("[{}] ".format(it["agent"]) if it["agent"] else "",
                                            " ".join(mask_secrets(it["text"]).splitlines())) for it in items)

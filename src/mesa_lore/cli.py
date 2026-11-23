@@ -1,8 +1,8 @@
-import argparse, hashlib, json, os, re, sqlite3, sys
+import argparse, hashlib, json, os, re, shutil, sqlite3, sys, time, unicodedata
 from contextlib import closing
 from pathlib import Path
-from mesa_lore.store import Store, _project_scope, get_db_path, get_project, scan_antigravity
-from mesa_lore.text import wrap_untrusted
+from mesa_lore.store import Store, _parse_ts, _project_scope, get_db_path, get_project, scan_antigravity
+from mesa_lore.text import mask_secrets, wrap_untrusted
 
 def get_queue_path() -> Path:
     return Path(q) if (q := os.environ.get("MESA_LORE_QUEUE")) else get_db_path().parent / "queue.txt"
@@ -98,6 +98,58 @@ def _export(args, parser):
     except sqlite3.OperationalError as e:
         sys.exit(f"export: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
 
+_EMPTY = "No memory yet. Run `mesa-lore install`."
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")  # stored text must not be able to drive the terminal
+_fields = lambda text: dict(ln.split(": ", 1) for ln in (text or "").splitlines() if ": " in ln)
+_cols = lambda c: 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
+_width = lambda s: sum(map(_cols, s))
+
+def _fit(text, width):
+    """One clean line of at most `width` columns. Masks first: a cut secret would no longer match."""
+    text = " ".join(_CONTROL.sub(" ", mask_secrets(text or "")).replace("**", "").split())
+    text = text[:-3].rstrip() + "…" if text.endswith("...") else text
+    if _width(text) <= width:
+        return text
+    end = used = 0
+    while used + _cols(text[end]) < width:
+        used, end = used + _cols(text[end]), end + 1
+    return text[:end].rstrip() + "…"
+
+def _ago(ts):
+    age = time.time() - t if (t := ts if isinstance(ts, float) else _parse_ts(ts)) else None  # scopes() gives epoch seconds
+    for size, unit in ((31536000, "year"), (2592000, "month"), (86400, "day"), (3600, "hour"), (60, "minute")):
+        if age is not None and age >= size:
+            return f"{int(age // size)} {unit}{'s' if age >= 2 * size else ''} ago"
+    return "just now" if age is not None else "unknown"
+
+def _overview(st, scopes, width):
+    you = [n for title, items in st.sections("global", 0).items() if title not in ("Sessions", "History") for n in items if n["kind"] != "handoff"]
+    out = ["YOU", *([f"  {_fit(n['text'], width - 2)}" for n in you] or ["  (none)"])]
+    for title, group in (("PROJECTS", [s for s in scopes if s[0] != "global" and not s[0].startswith("research:")]),
+                         ("RESEARCH", [s for s in scopes if s[0].startswith("research:")])):
+        out += ["", title] + ([] if group else ["  (none)"])
+        names = [_fit(name, width // 4) for name, _ in group]
+        name_w = max(map(_width, names), default=0)
+        for shown, (name, ts) in zip(names, group):
+            h = st.latest_handoff(name)
+            info = _fields(h["text"]) if h else {}
+            key = next((k for k in ("Next", "Open", "Done") if info.get(k)), "")  # auto handoffs have no Next line
+            meta = _fit(f"{_fit(h['agent'] or 'unknown', 12)} · {_ago(ts)}" if h else _ago(ts), width // 3)
+            body = _fit(info.get(key), width - name_w - _width(meta) - 12) if key else ""
+            left = f"  {shown}{' ' * (name_w - _width(shown))}  " + (f"{key}: {body}" if key else "")
+            out.append(f"{left}{' ' * (width - _width(left) - _width(meta))}{meta}")
+    return "\n".join(out)
+
+def _view(args):
+    if not get_db_path().exists():
+        return print(_EMPTY)
+    try:
+        with closing(Store(get_db_path(), read_only=True)) as st:
+            scopes = st.scopes()
+            print(_overview(st, scopes, max(shutil.get_terminal_size().columns, 40)) if scopes else _EMPTY)
+    except sqlite3.OperationalError as e:
+        sys.exit(f"view: cannot read {get_db_path()} ({e}). Run `mesa-lore doctor` to create or migrate it.")
+
 def main():
     parser = argparse.ArgumentParser(prog="mesa-lore", description="Local memory layer for coding agents")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -111,6 +163,7 @@ def main():
     p_search.add_argument("--kind", choices=["decision", "fact", "todo", "failed_attempt", "handoff"], default=None, help="Filter by note kind")
     p_index = sub.add_parser("index", help="Show session-start memory index")
     p_index.add_argument("--budget", type=int, default=400, help="Token budget")
+    sub.add_parser("view", help="Readable overview of your memory")
     p_show = sub.add_parser("show", help="Show entry details")
     p_show.add_argument("id", help="Entry ID")
     p_show.add_argument("--before", type=int, default=0, help="Neighbor chunks before")
@@ -158,6 +211,8 @@ def main():
         return
     if args.command == "export":
         return _export(args, parser)
+    if args.command == "view":
+        return _view(args)
 
     st = Store(get_db_path())
     try:
